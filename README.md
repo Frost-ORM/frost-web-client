@@ -1,6 +1,7 @@
 # frost-web
 Web Library for Frost ORM using annotations
 ## Donations
+<iframe>
 <div id="smart-button-container">
     <div style="text-align: center"><label for="description">Name </label><input type="text" name="descriptionInput" id="description" maxlength="127" value=""></div>
       <p id="descriptionError" style="visibility: hidden; color:red; text-align: center;">Please enter a description</p>
@@ -98,3 +99,4 @@ Web Library for Frost ORM using annotations
   }
   initPayPalButton();
   </script>
+  </iframe>
