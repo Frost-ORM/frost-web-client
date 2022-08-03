@@ -1,0 +1,15 @@
+{
+    "$schema": "https://typedoc.org/schema.json",
+    "entryPoints": ["src/index.ts"],
+    "out": "docs",
+    "excludePrivate": true,
+    "excludeProtected": true,
+    "umlClassDiagram": {
+        "type": "detailed",
+        "location": "local",
+        "format": "svg"
+    },
+    "plugin": ["typedoc-umlclass"]
+
+
+}

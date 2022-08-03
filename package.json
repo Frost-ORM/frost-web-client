@@ -1,0 +1,72 @@
+{
+    "name": "@frost/frost-web",
+    "version": "1.0.0",
+    "description": "Frost is an ORM for Firebase Realtime Database. it focuses on simplifying the relations between nodes in the database.",
+    "main": "dist/index.js",
+    "private": "true",
+    "types": "dist/index.d.ts",
+    "files": [
+        "/dist"
+    ],
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "decorators": "./dist/decorators/index.js",
+            "helpers": "./dist/helpers/index.js",
+            "default": "./dist/index.js"
+
+        },
+        "./package.json": "./package.json"
+    },
+    "typesVersions": {
+        "*": {
+            "decorators": ["dist/decorators/index.d.ts"],
+            "helpers": ["dist/helpers/index.d.ts"],
+            "default": ["dist/index.d.ts"]
+        }
+    },
+    "scripts": {
+        "clean:output": "rm -rf dist",
+        "prebuild": "npm run clean:output",
+        "build": "npx tsc",
+        "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "keywords": [
+        "Frost",
+        "FrostORM",
+        "FrostWeb",
+        "Frost-Web",
+        "Firebase",
+        "FirebaseDB",
+        "Firebase-realtime-database",
+        "realtime",
+        "database",
+        "ORM",
+        "NoSQL",
+        "Object",
+        "Relational",
+        "Mapping",
+        "firebasedb",
+        "real-time",
+        "firebase-rtdb"
+    ],
+    "author": {
+        "name": "Sami Mishal",
+        "email": "sami.mishal.1998@gmail.com"
+    },
+    "license": "GPL-3.0-or-later",
+    "devDependencies": {
+        "@types/firebase": "^3.2.1",
+        "typedoc": "^0.23.10",
+        "typedoc-bitbucket-theme": "^1.0.0",
+        "typedoc-umlclass": "^0.7.0",
+        "typescript": "^4.7.4"
+    },
+    "dependencies": {
+        "firebase": "^9.9.1",
+        "igniteui-typedoc-theme": "^3.1.0",
+        "lodash": "^4.17.21",
+        "reflect-metadata": "^0.1.13",
+        "rxjs": "^7.5.6"
+    }
+}

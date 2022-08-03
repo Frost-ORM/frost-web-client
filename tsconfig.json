@@ -1,0 +1,23 @@
+{
+    "compilerOptions": {
+      "module": "commonjs",
+      "target": "ESNext",
+      "declaration": true,
+      "emitDecoratorMetadata":true,
+      "experimentalDecorators":true,
+      // "declarationDir": "./dist/types",
+      "outDir": "./dist"
+    },
+    "include": [
+      "src/**/*"
+    ],
+    "exclude": [
+      "src/**/docs.ts"
+    ],
+    "typedocOptions": {
+      "entryPoints": ["src/index.ts"],
+      "out": "docs",
+      "excludePrivate":true,
+      "excludeProtected":true
+      }
+}
