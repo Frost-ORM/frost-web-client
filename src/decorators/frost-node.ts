@@ -4,7 +4,27 @@ import { FrostObject, IFrostObject } from './frost-object';
 
 
 
-
+/**
+ * This decorator allows you to declare an api class and provide the FrostObject Class to it
+ * This decorator is used to mark classes that extend {@link FrostApi | FrostApi\<T extends FrostObject\>}
+ * 
+ * @decorator
+ * 
+ * @example
+ * ```ts
+ * @FrostEntity({collectionPath : "/users"})
+ * class User extends FrostObject {
+ * ...
+ * }
+ * 
+ * @FrostNode({entity : User})
+ * class UsersApi extends FrostApi<User> {
+ * }
+ * ```
+ * 
+ * @param options - Api Options
+ * @param options.entity - the class that extends the FrostObject Class
+ */
 export function FrostNode<T extends FrostObject, I extends IFrostObject<T>>({
     entity,
 }: {

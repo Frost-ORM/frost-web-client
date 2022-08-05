@@ -13,23 +13,38 @@
             "types": "./dist/index.d.ts",
             "decorators": "./dist/decorators/index.js",
             "helpers": "./dist/helpers/index.js",
+            "get-indices": "./dist/get-indices.js",
+            "init": "./dist/init.js",
             "default": "./dist/index.js"
-
         },
         "./package.json": "./package.json"
     },
     "typesVersions": {
         "*": {
-            "decorators": ["dist/decorators/index.d.ts"],
-            "helpers": ["dist/helpers/index.d.ts"],
-            "default": ["dist/index.d.ts"]
+            "decorators": [
+                "dist/decorators/index.d.ts"
+            ],
+            "helpers": [
+                "dist/helpers/index.d.ts"
+            ],
+            "get-indices": [
+                "./dist/get-indices.d.ts"
+            ],
+            "init": [
+                "./dist/init.d.ts"
+            ],
+            "default": [
+                "dist/index.d.ts"
+            ]
         }
     },
     "scripts": {
         "clean:output": "rm -rf dist",
         "prebuild": "npm run clean:output",
         "build": "npx tsc",
-        "test": "echo \"Error: no test specified\" && exit 1"
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "build:doc": "typedoc --options typedoc.json",
+        "watch:doc": "typedoc --options typedoc.json --watch"
     },
     "keywords": [
         "Frost",
@@ -56,15 +71,18 @@
     },
     "license": "GPL-3.0-or-later",
     "devDependencies": {
+        "@memlab/memlab-typedoc-plugin-markdown": "^3.13.22",
         "@types/firebase": "^3.2.1",
+        "@zamiell/typedoc-plugin-markdown": "^3.13.4",
+        "igniteui-typedoc-theme": "^3.1.0",
         "typedoc": "^0.23.10",
         "typedoc-bitbucket-theme": "^1.0.0",
+        "typedoc-plugin-markdown": "^3.13.4",
         "typedoc-umlclass": "^0.7.0",
         "typescript": "^4.7.4"
     },
     "dependencies": {
         "firebase": "^9.9.1",
-        "igniteui-typedoc-theme": "^3.1.0",
         "lodash": "^4.17.21",
         "reflect-metadata": "^0.1.13",
         "rxjs": "^7.5.6"

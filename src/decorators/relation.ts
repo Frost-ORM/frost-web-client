@@ -1,10 +1,21 @@
 import 'reflect-metadata'
 import { DATA_REFERENCE, SYMBOL_PREFIX } from '../helpers/consts'
-import { FrostObject, PropsSymbol } from './frost-object'
 import  {join}  from "../helpers/join"
-import { MethodLogger } from './logger'
 
+
+/**
+ * @internal
+ */
 export const __frost__relations: Record<string, Relations> = {}
+/**
+ * @internal
+ */
+export const RelationSymbol = Symbol.for(SYMBOL_PREFIX + ':relation')
+/**
+ * @internal
+ */
+export const NodeRelationsSymbol = Symbol.for(SYMBOL_PREFIX + ':node-relations')
+
 
 export enum RelationTypes {
     ONE_TO_ONE = 'one_to_one',
@@ -12,11 +23,17 @@ export enum RelationTypes {
     MANY_TO_ONE = 'one_to_many',
     MANY_TO_MANY = 'many_to_many',
 }
+/**
+ * @internal
+ */
 export const ALL_RELATIONS = [
     RelationTypes.ONE_TO_ONE,
     RelationTypes.MANY_TO_MANY,
     RelationTypes.ONE_TO_MANY,
 ]
+/**
+ * @internal
+ */
 export type Prop = {
     propertyKey: string
     metadata: {
@@ -26,19 +43,49 @@ export type Prop = {
         type: any
     }
 }
-export const RelationSymbol = Symbol.for(SYMBOL_PREFIX + ':relation')
-export const NodeRelationsSymbol = Symbol.for(SYMBOL_PREFIX + ':node-relations')
+
+//TODO 
+/**
+ * This decorator allows you to define the relations between the properties of {@link FrostEntity | FrostEntities}
+ *
+ * 
+ * @param options  - options that define the relation
+ * 
+ * @example
+ * ```ts
+ * @FrostEntity({collectionPath:"/a"})
+ * class A extends FrostObject{
+ * ...
+ * @Relation({
+ *  name: "AB",
+ *  relation: RelationTypes.ONE_TO_MANY,
+ *  type: () => B,
+ * })
+ * b?:B[]
+ * 
+ * ...
+ * }
+ * 
+ * @FrostEntity({collectionPath:"/b"})
+ * class B extends FrostObject{
+ * ...
+ * @Relation({
+ *  name: "AB",
+ *  relation: RelationTypes.ONE_TO_MANY,
+ *  type: () => A,
+ * })
+ * a?:A
+ * 
+ * ...
+ * }
+ * ```
+ */
 export const Relation = ({
     name,
     relation: relationType,
     type,
     reference,
-}: {
-    name: string
-    reference?: string
-    relation?: RelationTypes
-    type: any
-}): PropertyDecorator => {
+}: RelationOptions): PropertyDecorator => {
     return (target, propertyKey) => {
         // Reflect.defineMetadata(RelationSymbol, {relation,type},target,propertyKey)
         const relations = new Set(
@@ -63,6 +110,56 @@ export const Relation = ({
     }
 }
 
+//TODO
+
+/**
+ * 
+ * Interface of the options that are passed to the {@link Relation} Decorator
+ * 
+ * @example
+ * ```ts
+ * class A extends FrostObject{
+ * ...
+ * @Relation({
+ *  name: "AB",
+ * relation: RelationTypes.ONE_TO_MANY,
+ * type: () => B,
+ * })
+ * b?:B[]
+ * 
+ * ...
+ * }
+ * ```
+ */
+export type RelationOptions = {
+    /**
+     * the name of the relation, It should be the same on both sides
+     */
+    name: string
+
+    /**
+     * (unrecommended)
+     * the name of the local field that contains the id that the relations is based on. this is optional and actually it's recommend not to use unless needed.
+     * <br/>
+     * Frost by default handles the relations and the stored keys that connect the nodes, but if you need access to these keys you could use the methods ({@link FrostObject.getConnectedKeys}, {@link FrostObject.getAllConnectedKeyss}
+     * or you could set the reference on the relation.
+     */
+    reference?: string
+
+    /**
+     * the relation type [One to One, One to Many, Many to Many]
+     */
+    relation?: RelationTypes,
+
+    /**
+     * the data type of the local property that the relation is defined on, (ignore array brackets in case of many-to-many/ one-to-many).<br/>
+     * this is needed because of some limitations in the decorators in TS/JS.<br/>
+     * also it needs to be a function that returns the type to avoid cyclic dependency ```(()=>Type)```
+     * 
+     * check the example
+     */
+    type: any
+}
 export class Relations {
     public relationType: RelationTypes
     public sides: (() => any)[] = []

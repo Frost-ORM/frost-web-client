@@ -7,7 +7,8 @@ export const ExcludedSymbol = Symbol.for(SYMBOL_PREFIX + ':exclude')
  * This decorator allows you to add properties to the Class that extends FireDbObject while excluding them from the database.
  *
  * The Property that is marked by this decorator will not be serialized and add to the node in firebase real-time database.
- *
+ * @decorator 
+ * 
  * @returns @link PropertyDecorator
  */
 export const Exclude = (): PropertyDecorator => {

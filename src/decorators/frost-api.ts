@@ -10,6 +10,7 @@ import {
 	push,
 	update,
 	QueryConstraint,
+	ListenOptions,
 } from "firebase/database";
 import * as _ from "lodash";
 import {
@@ -23,8 +24,9 @@ import {
 	concatMap,
 	concatAll,
 	of,
-	debounce,debounceTime
-
+	debounce,
+	debounceTime,
+	distinctUntilChanged,
 } from "rxjs";
 import { observable } from "../helpers/observable";
 import { valueOrNull } from "../helpers/valueOrNull";
@@ -33,24 +35,59 @@ import { resolve } from "../helpers/resolve";
 import { slashToDotJoin } from "../helpers/slashToDotJoin";
 import { join } from "../helpers/join";
 import { FrostObject, IFrostObject } from "./frost-object";
+import { Frost } from "../init";
 
 export abstract class FrostApi<T extends FrostObject> {
+	/**
+	 * 
+	 * @internal
+	 */
 	collectionPath: string;
 	// private many_to_many_val = {connected:true}
+	/**
+	 * 
+	 * @internal
+	 */
 	entity: IFrostObject<T>;
-
-	constructor(public db: Database) {}
-	static async getMany(db,collectionPath,...ids){
-		let snapshots = (await Promise.all(
-			ids.map((id)=>resolve(get(child(ref(db), join(collectionPath, id)))))
-		)).map(([snapshot,error])=>(snapshot && snapshot.exists())?snapshot.val():null)
-
-		return _.zipObject(ids,snapshots)
+	/**
+	 * 
+	 * @internal
+	 */
+	db: Database;
+	/**
+	 * 
+	 * @internal
+	 */
+	constructor() {
+		if (Frost.initialized) {
+			this.db = Frost.firebaseDB;
+		} else {
+			throw new Error("Frost is not initialized");
+		}
 	}
+
+	/**
+	 * 
+	 * @internal
+	 */
 	getMetadata = (symbol: string | symbol) => Reflect.getMetadata(symbol, this.entity.prototype);
+
+	/**
+	 * 
+	 * @internal
+	 */
 	getNodeRelations = (): string[] => this.getMetadata(NodeRelationsSymbol) ?? [];
+
+	/**
+	 * 
+	 * @internal
+	 */
 	getMetadataKeys = () => Reflect.getMetadataKeys(this.entity.prototype);
 
+	/**
+	 * 
+	 * @internal
+	 */
 	getAllRelations = (options?: { type?: RelationTypes[]; keys?: string[] }): Relations[] => {
 		let type = options?.type || ALL_RELATIONS;
 		let keys = options?.keys;
@@ -63,6 +100,11 @@ export abstract class FrostApi<T extends FrostObject> {
 					(!keys || keys.includes(relation.fields[0]) || keys.includes(relation.fields[1]))
 			);
 	};
+
+	/**
+	 * 
+	 * @internal
+	 */
 	getPropsWithRelation = (options?: { type?: RelationTypes[]; keys?: string[] }): Relations[] => {
 		let type = options?.type || ALL_RELATIONS;
 		let keys = options?.keys;
@@ -75,6 +117,11 @@ export abstract class FrostApi<T extends FrostObject> {
 					type.includes(relation.relationType) && (!keys || keys.includes(relation.fields[0]))
 			);
 	};
+
+	/**
+	 * 
+	 * @internal
+	 */
 	getRelatedProps = (options?: { type?: RelationTypes[]; keys?: string[] }): Relations[] => {
 		let type = options?.type || ALL_RELATIONS;
 		let keys = options?.keys;
@@ -87,6 +134,26 @@ export abstract class FrostApi<T extends FrostObject> {
 					type.includes(relation.relationType) && (!keys || keys.includes(relation.fields[1]))
 			);
 	};
+
+	static async getMany(db, collectionPath, ...ids) {
+		let snapshots = (
+			await Promise.all(ids.map((id) => resolve(get(child(ref(db), join(collectionPath, id))))))
+		).map(([snapshot, error]) => (snapshot && snapshot.exists() ? snapshot.val() : null));
+
+		return _.zipObject(ids, snapshots);
+	}
+	static observeMany(db, collectionPath, options?: ListenOptions, ...ids) {
+		let observables: Record<string, Observable<any>> = _.zipObject(
+			ids,
+			ids.map((id) =>
+				observable(child(ref(db), join(collectionPath, id)), options).pipe(
+					map((snapshot) => (snapshot && snapshot.exists() ? snapshot.val() : null))
+				)
+			)
+		);
+
+		return combineLatest(observables);
+	}
 
 	async findMany(options: { include?: string[] } | null, ...queryConstraints: QueryConstraint[]): Promise<T[]> {
 		try {
@@ -129,14 +196,20 @@ export abstract class FrostApi<T extends FrostObject> {
 		}
 	}
 
+
 	listenMany(
-		options: { include?: string[]; listenToNestedChanges?: boolean,debounceDuration?:number } | null,
+		options: {
+			include?: string[];
+			listenToNestedChanges?: boolean | Record<RelationTypes, boolean>;
+			debounceDuration?: number;
+		} | null,
 		...queryConstraints: QueryConstraint[]
 	): Observable<T[]> {
+		// TODO improve like listen
 		let listenToNestedChanges = Object.hasOwn(options ?? {}, "listenToNestedChanges")
-			? Boolean(options.listenToNestedChanges)
+			? options.listenToNestedChanges
 			: true;
-		let debounceDuration = options.debounceDuration ?? 500
+		let debounceDuration = options.debounceDuration ?? 500;
 		try {
 			return observable(query(ref(this.db, this.collectionPath), ...queryConstraints)).pipe(
 				switchMap((snapshot) => {
@@ -160,17 +233,18 @@ export abstract class FrostApi<T extends FrostObject> {
 			throw error;
 		}
 	}
-	listen(id: string, include?: string[], listenToNestedChanges = true) {
+	listen(id: string, include?: string[], listenToNestedChanges: boolean | Record<RelationTypes, boolean> = true) {
 		try {
-			console.log("FrostApi::listen", this.entity, this.collectionPath);
-
-			return observable(child(ref(this.db), join(this.collectionPath, id))).pipe(
+			// console.log("FrostApi::listen", this.entity, this.collectionPath);
+			let object = observable(child(ref(this.db), join(this.collectionPath, id)));
+			let relations = object.pipe(
+				distinctUntilChanged((prev, curr) => _.isEqual(prev.val()?.["__frost__"], curr.val()?.["__frost__"])), //TODO improve by including the include filter here also
 				switchMap((snapshot) => {
 					console.log(snapshot);
 					if (snapshot.exists()) {
 						let value = snapshot.val();
 						if (listenToNestedChanges) {
-							return this.getRelatedObservable(value, include);
+							return this.getRelatedObservable(value, include, listenToNestedChanges);
 						}
 						return from(this.getRelated(value, include));
 					} else {
@@ -178,11 +252,15 @@ export abstract class FrostApi<T extends FrostObject> {
 					}
 				})
 			);
+			return combineLatest({ object, relations }).pipe(
+				map(({ object, relations }) => new this.entity({ ...relations, ...object }))
+			);
 		} catch (error) {
 			console.log(error);
 			throw error;
 		}
 	}
+
 	async getRelated(object: any, include?: string[]): Promise<T> {
 		let relations = this.getAllRelations({ keys: include ?? [] });
 		let value = object;
@@ -226,15 +304,20 @@ export abstract class FrostApi<T extends FrostObject> {
 					break;
 				case RelationTypes.MANY_TO_MANY:
 					{
-						value[rel.localField] = await (
-							await get(
-								query(
-									ref(this.db, rel.foreignCollectionPath),
-									orderByChild(join(rel.foreignReference, id,'connected')),
-									equalTo(true)
-								)
-							)
-						).val();
+						// value[rel.localField] = await (
+						// 	await get(
+						// 		query(
+						// 			ref(this.db, rel.foreignCollectionPath),
+						// 			orderByChild(join(rel.foreignReference, id, "connected")),
+						// 			equalTo(true)
+						// 		)
+						// 	)
+						// ).val();
+						value[rel.localField] = await FrostApi.getMany(
+							this.db,
+							rel.foreignCollectionPath,
+							...(this.entity.getConnectedKeys(rel.localField, object) ?? [])
+						);
 					}
 					break;
 			}
@@ -242,7 +325,11 @@ export abstract class FrostApi<T extends FrostObject> {
 		console.log("getRelated", { value });
 		return new this.entity(value);
 	}
-	getRelatedObservable(object: any, include?: string[]): Observable<T> {
+	getRelatedObservable(
+		object: any,
+		include?: string[],
+		listenToNestedChanges?: boolean | Record<RelationTypes, boolean>
+	): Observable<T> {
 		let relations = this.getAllRelations({ keys: include ?? [] });
 		let value = object;
 		let id = object.id;
@@ -252,12 +339,15 @@ export abstract class FrostApi<T extends FrostObject> {
 			switch (rel.relationType) {
 				case RelationTypes.ONE_TO_ONE:
 					{
-						observables[rel.localField] = observable(
-							child(
-								ref(this.db),
-								join(rel.foreignCollectionPath, _.get(value, slashToDotJoin(rel.localReference)))
-							)
-						).pipe(map((value) => value.val()));
+						let _ref = child(
+							ref(this.db),
+							join(rel.foreignCollectionPath, _.get(value, slashToDotJoin(rel.localReference)))
+						);
+						observables[rel.localField] = observable(_ref, {
+							onlyOnce: !(
+								listenToNestedChanges === true || listenToNestedChanges?.[RelationTypes.ONE_TO_ONE]
+							),
+						}).pipe(map((value) => value.val()));
 					}
 					break;
 				case RelationTypes.ONE_TO_MANY:
@@ -275,20 +365,37 @@ export abstract class FrostApi<T extends FrostObject> {
 											rel.foreignCollectionPath,
 											_.get(value, slashToDotJoin(rel.localReference))
 										)
-								  )
+								  ),
+							{
+								onlyOnce: !(
+									listenToNestedChanges === true || listenToNestedChanges?.[RelationTypes.ONE_TO_MANY]
+								),
+							}
 						).pipe(map((value) => value.val()));
 					}
 
 					break;
 				case RelationTypes.MANY_TO_MANY:
 					{
-						observables[rel.localField] = observable(
-							query(
-								ref(this.db, join(rel.foreignCollectionPath)),
-								orderByChild(join(rel.foreignReference, id,'connected')),
-								equalTo(true)
-							)
-						).pipe(map((value) => value.val()));
+						// observables[rel.localField] = observable(
+						// 	query(
+						// 		ref(this.db, join(rel.foreignCollectionPath)),
+						// 		orderByChild(join(rel.foreignReference, id, "connected")),
+						// 		equalTo(true)
+						// 	)
+						// ).pipe(map((value) => value.val()));
+						value[rel.localField] = FrostApi.observeMany(
+							this.db,
+							rel.foreignCollectionPath,
+
+							{
+								onlyOnce: !(
+									listenToNestedChanges === true ||
+									listenToNestedChanges?.[RelationTypes.MANY_TO_MANY]
+								),
+							},
+							...(this.entity.getConnectedKeys(rel.localField, object) ?? [])
+						);
 					}
 					break;
 			}
@@ -299,12 +406,13 @@ export abstract class FrostApi<T extends FrostObject> {
 			: of(new this.entity({ ...value }));
 	}
 
-	async add(object: T, connect?: Record<string, string | string[]>): Promise<any> {
+	async add(object: T, connect?: ConnectOptions): Promise<{id}> {
 		const { map: updates, id } = await this.getAddMap(object, connect);
 		await update(ref(this.db), updates);
 		return { id };
 	}
-	async getAddMap(object: T, connect?: Record<string, string | string[]>): Promise<{ map: any; id: string }> {
+
+	async getAddMap(object: T, connect?: ConnectOptions): Promise<{ map: any; id: string }> {
 		const newKey = push(child(ref(this.db), this.collectionPath)).key;
 		if (!newKey) throw new Error("Can't add child to node: " + this.collectionPath);
 		let data = JSON.parse(JSON.stringify(object));
@@ -317,102 +425,22 @@ export abstract class FrostApi<T extends FrostObject> {
 			id: newKey,
 			map: (await this.getUpdateMap(object, connect)).map,
 		};
-		//
-		// if (connect) {
-		//   let relations = this.getAllRelations({ keys: Object.keys(connect) });
-		//   console.log(this.entity.name, { relations });
-		//   for (const _rel of relations) {
-		//     let rel = _rel.withSide(this.entity);
-		//     switch (rel.relationType) {
-		//       case RelationTypes.ONE_TO_ONE:
-		//         _.set(data, dotJoin(rel.localReference), connect[rel.localField]);
-		//         updates[
-		//           join(
-		//             rel.foreignCollectionPath,
-		//             connect[rel.localField],
-		//             rel.foreignReference
-		//           )
-		//         ] = data.id;
-		//         break;
-		//       case RelationTypes.ONE_TO_MANY:
-		//         if (rel.isMaster) {
-		//           const toBeUpdated = connect[rel.localField];
-		//           console.log({ toBeUpdated });
-		//           if (Array.isArray(toBeUpdated)) {
-		//             toBeUpdated.forEach((element) => {
-		//               _.set(data, dotJoin(rel.localReference, element), true);
-		//               updates[
-		//                 join(
-		//                   rel.foreignCollectionPath,
-		//                   element,
-		//                   rel.foreignReference
-		//                 )
-		//               ] = data.id;
-		//             });
-		//           } else {
-		//             throw new Error(
-		//               'connect[' +
-		//                 rel.localField +
-		//                 '] should be an array in entity (' +
-		//                 this.entity.name +
-		//                 ')'
-		//             );
-		//           }
-		//         } else {
-		//           console.log(rel.localField, connect);
-		//           const toBeUpdated = connect[rel.localField];
-		//           if (typeof toBeUpdated === 'string') {
-		//             _.set(data, dotJoin(rel.localReference), toBeUpdated);
-		//             updates[
-		//               join(
-		//                 rel.foreignCollectionPath,
-		//                 toBeUpdated,
-		//                 rel.foreignReference,
-		//                 data.id
-		//               )
-		//             ] = true;
-		//           } else {
-		//             throw new Error(
-		//               'connect[' +
-		//                 rel.localField +
-		//                 '] should be a string in entity (' +
-		//                 rel.sides[0]().name +
-		//                 ')'
-		//             );
-		//           }
-		//         }
-		//         break;
-		//       case RelationTypes.MANY_TO_MANY:
-		//         {
-		//           const toBeUpdated = connect[rel.localField];
-		//           if (Array.isArray(toBeUpdated)) {
-		//             toBeUpdated.forEach((element: string) => {
-		//               _.set(data, dotJoin(rel.localReference, element), true);
-		//               updates[join(rel.foreignReference, data.id)] = true;
-		//             });
-		//           } else {
-		//             throw new Error(
-		//               'connect[' +
-		//                 rel.localField +
-		//                 '] should be an array in entity (' +
-		//                 this.entity.name +
-		//                 ')'
-		//             );
-		//           }
-		//         }
-		//         break;
-		//     }
-		//   }
-		// }
-		// updates[join(this.collectionPath, newKey)] = data;
-		// console.log({ updates });
-		// return { map: updates, id: newKey };
 	}
 
+	/**
+	 * Writes multiple values to the Database at once.
+	 * 
+	 *  ***Warning:*** Changes to nested instances won't be applied
+	 * 
+	 * @param object - The object instance containing the new changes
+	 * @param connect - See {@link ConnectOptions}.
+	 * @param disconnect - See {@link DisconnectOptions}.
+	 * @returns an object containing the update map
+	 */
 	async getUpdateMap(
 		object: T,
-		connect?: Record<string, string | string[]>,
-		disconnect?: "all" | Record<string, "all" | true | string | string[]>
+		connect?: ConnectOptions,
+		disconnect?: DisconnectOptions
 	): Promise<{ map: any }> {
 		let data = JSON.parse(JSON.stringify(object));
 		if (!data.id) throw new Error("Can't add child to node: " + this.collectionPath);
@@ -474,7 +502,7 @@ export abstract class FrostApi<T extends FrostObject> {
 							// todo add option disconnect all
 							if (rel.isMaster) {
 								let toBeUpdated = map[rel.localField];
-								if (toBeUpdated === "all") {
+								if (toBeUpdated === "all" || toBeUpdated === true) {
 									toBeUpdated = object.getConnectedKeys(rel.localField) ?? [];
 								}
 								if (Array.isArray(toBeUpdated)) {
@@ -528,7 +556,7 @@ export abstract class FrostApi<T extends FrostObject> {
 							{
 								// todo add option disconnect all
 								let toBeUpdated = map[rel.localField];
-								if (toBeUpdated === "all") {
+								if (toBeUpdated === "all" || toBeUpdated === true) {
 									toBeUpdated = object.getConnectedKeys(rel.localField) ?? [];
 								}
 								if (Array.isArray(toBeUpdated)) {
@@ -536,11 +564,11 @@ export abstract class FrostApi<T extends FrostObject> {
 										_.set(
 											data,
 											slashToDotJoin(rel.localReference, element),
-											valueOrNull(operation === "connect",{connected:true})
+											valueOrNull(operation === "connect", { connected: true })
 										);
 										updates[
 											join(rel.foreignCollectionPath, element, rel.foreignReference, data.id)
-										] = valueOrNull(operation === "connect",{connected:true});
+										] = valueOrNull(operation === "connect", { connected: true });
 									});
 								} else {
 									throw new Error(
@@ -564,55 +592,123 @@ export abstract class FrostApi<T extends FrostObject> {
 
 	/**
 	 * Writes multiple values to the Database at once.
-	 *
-	 * The `values` argument contains multiple property-value pairs that will be
-	 * written to the Database together. Each child property can either be a simple
-	 * property (for example, "name") or a relative path (for example,
-	 * "name/first") from the current location to the data to update.
-	 *
-	 * As opposed to the `set()` method, `update()` can be use to selectively update
-	 * only the referenced properties at the current location (instead of replacing
-	 * all the child properties at the current location).
-	 *
-	 * The effect of the write will be visible immediately, and the corresponding
-	 * events ('value', 'child_added', etc.) will be triggered. Synchronization of
-	 * the data to the Firebase servers will also be started, and the returned
-	 * Promise will resolve when complete. If provided, the `onComplete` callback
-	 * will be called asynchronously after synchronization has finished.
-	 *
-	 * A single `update()` will generate a single "value" event at the location
-	 * where the `update()` was performed, regardless of how many children were
-	 * modified.
-	 *
-	 * Note that modifying data with `update()` will cancel any pending
-	 * transactions at that location, so extreme care should be taken if mixing
-	 * `update()` and `transaction()` to modify the same data.
-	 *
-	 * Passing `null` to `update()` will remove the data at this location.
-	 *
-	 * See
-	 * {@link https://firebase.googleblog.com/2015/09/introducing-multi-location-updates-and_86.html | Introducing multi-location updates and more}.
-	 *
-	 * @param ref - The location to write to.
-	 * @param values - Object containing multiple values.
-	 * @returns Resolves when update on server is complete.
+	 * 
+	 *  ***Warning:*** Changes to nested instances won't be applied
+	 * 
+	 * @param object - The object instance containing the new changes
+	 * @param connect -  See {@link ConnectOptions}.
+	 * @param disconnect - See {@link DisconnectOptions}.
 	 */
 	async update(
 		object: T,
-		connect?: Record<string, string | string[]>,
-		disconnect?: "all" | Record<string, string | string[]>
+		connect?: ConnectOptions,
+		disconnect?: DisconnectOptions
 	): Promise<void> {
 		const { map: updates } = await this.getUpdateMap(object, connect, disconnect);
 		await update(ref(this.db), updates);
 	}
 
-	async getDeleteMap(object: T, disconnect: "all" | Record<string, string | string[]>): Promise<{ map: any }> {
+	/**
+	 * Returns a map of the updates that could be passed to the updated function from firebaseDB
+	 * if the map is applied it removes the Object from the database and disconnects related objects depending on the disconnect parameter
+	 *
+	 * @param object - The object instance to be deleted from the database (the object instance should be the one fetched from Frost or you can do it manually be constructing an instance)
+	 * @param disconnect - See { @link DisconnectOptions }
+	 * @returns an object containing the update map
+	 */
+	async getDeleteMap(object: T, disconnect?:DisconnectOptions): Promise<{ map: any }> {
 		let map = (await this.getUpdateMap(object, undefined, disconnect)).map;
 		map[join(this.collectionPath, object.id!)] = null;
 		return { map };
 	}
-	async delete(object: T, disconnect: "all" | Record<string, string | string[]>): Promise<void> {
+
+	/**
+	 * Removes the Object from the database and disconnects related objects depending on the disconnect parameter
+	 *
+	 * See
+	 * {@link FrostApi.getDeleteMap | getDeleteMap}.
+	 *
+	 * @param object - The object instance to be deleted from the database (the object instance should be the one fetched from Frost or you can do it manually be constructing an instance)
+	 * @param disconnect - See {@link DisconnectOptions}.
+	 * 
+	 */
+	async delete(object: T, disconnect?:DisconnectOptions): Promise<void> {
 		const { map: updates } = await this.getDeleteMap(object, disconnect);
 		await update(ref(this.db), updates);
 	}
 }
+
+// TODO Examples
+/**
+ * The related instances to disconnect
+ * 
+ * - Either the string `all` which will disconnect all relations or
+ * - undefined which won't disconnect any relations or
+ * - a map with the keys of the properties to disconnect and the possible values are one of the following:
+ * 	- `all`|true, works with all relation types. will disconnect everything
+ * 	- Incase of One to One: the string of the id of the connected instance
+ * 	- Incase of Many to Many: an array of the ids of the connected instances
+ * 	- Incase of Many to Many:
+ * 		- From the One side:  an array of the ids of the connected instances
+ * 		- From the Many side: the string of the id of the connected instance
+ * @example all
+ * ```json
+ * "all"
+ *```
+
+ * @example all specific relations
+ * ```json
+ * {
+ * 	"posts": "all",
+ * 	"comments": "all",
+ * }
+ * //OR 
+ * {
+ * 	"posts": true,
+ *  "comments": true,
+ * }
+ * ```
+ * @example  disconnect specific nodes
+ * ```json
+ * {
+ * 	"posts": [],
+ *  "comments": [],
+ * }
+ *```
+
+ */
+export type DisconnectOptions = undefined| "all" | Record<string, "all" | true | string | string[]>
+
+/**
+ * The related instances to connect
+ * 
+ * - undefined which won't connect any relations or
+ * - a map with the keys of the properties to connect and the possible values are one of the following:
+ * 	- Incase of One to One: the string of the id of the instance to be connected
+ * 	- Incase of Many to Many: an array of the ids of the instances to be connected
+ * 	- Incase of Many to Many:
+ * 		- From the One side:  an array of the ids of the instances to be connected
+ * 		- From the Many side: the string of the id of the instance to be connected
+ * 
+ * @example one-to-one and many-to-many
+ * ```json
+ * {
+ * 	"studentProfileData":"", // One-to-One
+ * 	"courses": [],// Many-to-Many
+ * }
+ *```
+ *
+ * @example One-to-Many (One Side)
+ * ```json
+ * {
+ * 	"posts":[],
+ * }
+ * ```
+ * @example  One-to-Many (Many Side)
+ * ```json
+ * {
+ * 	"author":"",
+ * }
+ * ```
+ */
+export type ConnectOptions = Record<string, string | string[]> | undefined

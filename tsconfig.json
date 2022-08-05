@@ -13,11 +13,5 @@
     ],
     "exclude": [
       "src/**/docs.ts"
-    ],
-    "typedocOptions": {
-      "entryPoints": ["src/index.ts"],
-      "out": "docs",
-      "excludePrivate":true,
-      "excludeProtected":true
-      }
+    ]
 }

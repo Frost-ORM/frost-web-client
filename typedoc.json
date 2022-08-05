@@ -1,15 +1,23 @@
 {
     "$schema": "https://typedoc.org/schema.json",
-    "entryPoints": ["src/index.ts"],
+    "entryPoints": ["./src/docs/index.ts"],
     "out": "docs",
     "excludePrivate": true,
     "excludeProtected": true,
+    "excludeInternal": true,
     "umlClassDiagram": {
         "type": "detailed",
         "location": "local",
         "format": "svg"
     },
-    "plugin": ["typedoc-umlclass"]
-
-
+    "plugin": ["typedoc-umlclass", "typedoc-plugin-markdown"],
+    "theme": "markdown",
+    "disableSources": true,
+    "hideGenerator": true,
+    "cleanOutputDir": true,
+    "categorizeByGroup": true,
+    "allReflectionsHaveOwnDocument": true,
+    "namedAnchors": false,
+    "entryDocument": "intro.md",
+    "hideBreadcrumbs": false,
 }
