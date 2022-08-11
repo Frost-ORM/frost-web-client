@@ -1,6 +1,6 @@
 {
     "name": "@frost-orm/frost-web",
-    "version": "1.0.1",
+    "version": "1.0.0",
     "description": "Frost is an ORM for Firebase Realtime Database. it focuses on simplifying the relations between nodes in the database.",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
