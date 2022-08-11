@@ -22,6 +22,9 @@ TODO
 [x] listen to nested
 [x] query Observable
 
+ [ ] fix connect already connected 
+ [ ] updateMap connect one possible array
+ [ ] mappedType for connect options
 
  [ ] migrate
  [ ] code-gen
@@ -125,10 +128,11 @@ const FrostEntityOld = ({
  * 
  * @param options - Entity Options
  * @param options.collectionPath - the path of the node in firebaseDB
+ * @returns {ClassDecorator}
  */
 export const FrostEntity = ({
   collectionPath,
-}: FrostEntityDecoratorOptions):PropertyDecorator => {
+}: FrostEntityDecoratorOptions) => {
   return <T extends { new(...args: any[]): FrostObject; }>(constructor: T) => {
     Object.defineProperty(constructor, 'collectionPath', { value: collectionPath });
   };

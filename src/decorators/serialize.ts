@@ -14,7 +14,7 @@ export type Serializer<T, P> = (value: P, object: T) => any
 
 /**
  * A Type of A Function that serializes the data to JSON
- * @typeParam D - the type of serialized property ( checkout the Type { @link AdvancedJSONPrimitive | AdvancedJSONPrimitive\<P\> } )
+ * @typeParam D - the type of serialized property ( checkout the Type {@link AdvancedJSONPrimitive | AdvancedJSONPrimitive<P\>} )
  * @typeParam P - type of the property after Deserializing 
  */
 export type Deserializer<D extends (AdvancedJSONPrimitive<P>|undefined| null),P> = (value: D, object: any) => P
@@ -66,6 +66,12 @@ export type SerializeOptionsWithoutNullCall<T, P> = {
     allowNullCall?:false
   }
 
+/**
+ * A union type of {@link SerializeOptionsWithoutNullCall | SerializeOptionsWithoutNullCall<T, P\> } and {@link SerializeOptionsWithNullCall | SerializeOptionsWithNullCall<T, P\> }
+ * 
+ * @see {@link SerializeOptionsWithoutNullCall | SerializeOptionsWithoutNullCall<T, P\> } 
+ * @see {@link SerializeOptionsWithNullCall | SerializeOptionsWithNullCall<T, P\> }
+ */
 export type SerializeOptions<T, P> = SerializeOptionsWithNullCall<T,P> | SerializeOptionsWithoutNullCall<T, P>
 
 export type Serializers = Record<string | symbol, SerializeOptions<any, any>>
@@ -74,7 +80,7 @@ export type Serializers = Record<string | symbol, SerializeOptions<any, any>>
 
 /**
  * Serialize Decorator is a Property Decorator
- * 
+ * @decorator
  * This used to provide the de/serializing functions to be used on the property when transforming the object to JSON
  * 
  * @param options 
@@ -82,7 +88,7 @@ export type Serializers = Record<string | symbol, SerializeOptions<any, any>>
  * @param options.deserialize - deserializing function
  * @param options.allowNullCall - if this is true then the de/serializer will be called even on null|undefined values
  * 
- * @default options.allowNullCall false
+ * @defaultValue options.allowNullCall false
  * 
  */
 export const Serialize = <T, P>({
@@ -110,6 +116,7 @@ export const Serialize = <T, P>({
  * This a default Date { @link Serialize } Decorator that will use the native JS Date Class to serialize and deserialize the dates
  * 
  * use this to serialize the dates by default 
+ * @decorator
  * 
  * @example
  * ```ts

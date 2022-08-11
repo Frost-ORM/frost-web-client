@@ -6,7 +6,7 @@ import { FrostObject, IFrostObject } from './frost-object';
 
 /**
  * This decorator allows you to declare an api class and provide the FrostObject Class to it
- * This decorator is used to mark classes that extend {@link FrostApi | FrostApi\<T extends FrostObject\>}
+ * This decorator is used to mark classes that extend {@link FrostApi | FrostApi<T extends FrostObject\>}
  * 
  * @decorator
  * 

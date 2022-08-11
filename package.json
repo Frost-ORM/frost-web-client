@@ -1,9 +1,8 @@
 {
-    "name": "@frost/frost-web",
+    "name": "@frost-orm/frost-web",
     "version": "1.0.0",
     "description": "Frost is an ORM for Firebase Realtime Database. it focuses on simplifying the relations between nodes in the database.",
     "main": "dist/index.js",
-    "private": "true",
     "types": "dist/index.d.ts",
     "files": [
         "/dist"
@@ -43,7 +42,7 @@
         "prebuild": "npm run clean:output",
         "build": "npx tsc",
         "test": "echo \"Error: no test specified\" && exit 1",
-        "build:doc": "typedoc --options typedoc.json",
+        "build:doc": "typedoc --options typedoc.json && rm -rf ./docs/intro.md ./docs/.nojekyll",
         "watch:doc": "typedoc --options typedoc.json --watch"
     },
     "keywords": [
@@ -69,7 +68,7 @@
         "name": "Sami Mishal",
         "email": "sami.mishal.1998@gmail.com"
     },
-    "license": "GPL-3.0-or-later",
+    "license": "GPL-3.0",
     "devDependencies": {
         "@memlab/memlab-typedoc-plugin-markdown": "^3.13.22",
         "@types/firebase": "^3.2.1",

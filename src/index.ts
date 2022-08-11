@@ -1,3 +1,3 @@
 export * from "./decorators"
 export * from "./get-indices"
-export * from "./init"
+export * from "./frost"
