@@ -1,6 +1,6 @@
 {
     "name": "@frost-orm/frost-web",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "description": "Frost is an ORM for Firebase Realtime Database. it focuses on simplifying the relations between nodes in the database.",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
@@ -12,7 +12,7 @@
             "types": "./dist/index.d.ts",
             "decorators": "./dist/decorators/index.js",
             "helpers": "./dist/helpers/index.js",
-            "get-indices": "./dist/get-indices.js",
+            "types-helpers": "./dist/types-helpers/index.js",
             "init": "./dist/init.js",
             "default": "./dist/index.js"
         },
@@ -26,8 +26,8 @@
             "helpers": [
                 "dist/helpers/index.d.ts"
             ],
-            "get-indices": [
-                "./dist/get-indices.d.ts"
+            "types-helpers": [
+                "dist/types-helpers/index.d.ts"
             ],
             "init": [
                 "./dist/init.d.ts"
