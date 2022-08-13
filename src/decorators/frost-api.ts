@@ -30,9 +30,9 @@ import { slashToDotJoin } from "../helpers/slashToDotJoin";
 import { trueOrNull } from "../helpers/trueOrNull";
 import { valueOrNull } from "../helpers/valueOrNull";
 import { Frost } from "../frost";
-import { FrostObject, IFrostObject } from "./frost-object";
+import { FrostObject, IFrostObject, KeysOfEntriesWithRelation } from "./frost-object";
 import { ALL_RELATIONS, NodeRelationsSymbol, Relations, RelationTypes, __frost__relations } from "./relation";
-import { ClassOf } from "../types/constructor"
+import { ClassOf } from "../types-helpers/constructor"
 
 export type IFrostApi = ClassOf<FrostApi<FrostObject>>
 export abstract class FrostApi<T extends FrostObject> {
@@ -164,18 +164,18 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * Just like the {@link https://firebase.google.com/docs/reference/js/database.md#query | query} function in the firebaseDB,
 	 *  but the first parameter is options for relations then is spread parameter like {@link https://firebase.google.com/docs/reference/js/database.md#query | query}
 	 *
-	 * Just like{@link FrostApi.listenMany} but with promises instead of observables.
+	 * Just like {@link FrostApi.observeMany} but with promises instead of observables.
 	 *
-	 * @see {@link FrostApi.listenMany}
+	 * @see {@link FrostApi.observeMany}
 	 * @see {@link Include}.
 	 * @see {@link https://firebase.google.com/docs/reference/js/database.queryconstraint | QueryConstraint}.
 	 *
-	 * @param options - options for the observable
+	 * @param options - options for the query
 	 * @param {Include} options.include - see {@link Include}.
 	 * @param {QueryConstraint[]} queryConstraints - see {@link https://firebase.google.com/docs/reference/js/database.queryconstraint | QueryConstraint}.
 	 * @returns the query results with related objects that were given in the include parameter
 	 */
-	async findMany(options: { include?: Include } | null, ...queryConstraints: QueryConstraint[]): Promise<T[]> {
+	async findMany(options: { include?: Include<T> } | null, ...queryConstraints: QueryConstraint[]): Promise<T[]> {
 		try {
 			const [snapshot, error] = await resolve(get(query(ref(this.db, this.collectionPath), ...queryConstraints)));
 			if (error && !snapshot) {
@@ -201,16 +201,16 @@ export abstract class FrostApi<T extends FrostObject> {
 	/**
 	 * Returns the object with the given id and containing the related instances with it (depending on the include parameter)
 	 *
-	 * Just like {@link FrostApi.listen} but with promises instead of observables
+	 * Just like {@link FrostApi.observeOne} but with promises instead of observables
 	 *
-	 * @see {@link FrostApi.listen}
+	 * @see {@link FrostApi.observeOne}
 	 * @see {@link Include}.
 	 *
 	 * @param id - The object that you want to get the related objects from. (doesn't have to be an instantiated object could be the data map that was fetched manually )
 	 * @param {Include} include - see {@link Include}.
 	 * @returns the object instance of the given id with related objects that were given in the include parameter
 	 */
-	async find(id: string, include?: Include): Promise<T> {
+	async findOne(id: string, include?: Include<T>): Promise<T> {
 		try {
 			let [snapshot, error] = await resolve(get(child(ref(this.db), join(this.collectionPath, id))));
 			if (error && !snapshot) {
@@ -242,12 +242,12 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param {number} options.debounceDuration in Milliseconds. incase multiple changes happen to the query in short time, this will prevent the observable to emit too many times
 	 * @param {QueryConstraint[]} queryConstraints - see {@link https://firebase.google.com/docs/reference/js/database.queryconstraint | QueryConstraint}.
 	 * @defaultValue options.debounceDuration 500
-	 * @defaultValue options.listenToNestedChanges true
+	 * @defaultValue options.listenToNestedChanges false
 	 * @returns an Observable of the query results with related objects that were given in the include parameter
 	 */
-	listenMany(
+	observeMany(
 		options: {
-			include?: string[];
+			include?: Include<T>;
 			listenToNestedChanges?: ListenToNestedChanges;
 			debounceDuration?: number;
 		} | null,
@@ -256,7 +256,7 @@ export abstract class FrostApi<T extends FrostObject> {
 		// TODO improve like listen
 		let listenToNestedChanges = Object.hasOwn(options ?? {}, "listenToNestedChanges")
 			? options.listenToNestedChanges
-			: true;
+			: false;
 		let debounceDuration = options.debounceDuration ?? 500;
 		try {
 			return observable(query(ref(this.db, this.collectionPath), ...queryConstraints)).pipe(
@@ -291,10 +291,10 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param id - The object that you want to get the related objects from. (doesn't have to be an instantiated object could be the data map that was fetched manually )
 	 * @param {Include} include - see {@link Include}.
 	 * @param {ListenToNestedChanges} listenToNestedChanges - see {@link ListenToNestedChanges}.
-	 * @defaultValue listenToNestedChanges true
+	 * @defaultValue listenToNestedChanges false
 	 * @returns an Observable of the object instance of the given id with related objects that were given in the include parameter
 	 */
-	listen(id: string, include?: Include, listenToNestedChanges: ListenToNestedChanges = true) {
+	observeOne(id: string, include?: Include<T>, listenToNestedChanges: ListenToNestedChanges = false) {
 		try {
 			// console.log("FrostApi::listen", this.entity, this.collectionPath);
 			let object = observable(child(ref(this.db), join(this.collectionPath, id)));
@@ -335,7 +335,7 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param {Include} include - see {@link Include}.
 	 * @returns an object instance with related objects that were given in the include parameter
 	 */
-	async getRelated(object: any, include?: Include): Promise<T> {
+	async getRelated(object: any, include?: Include<T>): Promise<T> {
 		let relations = this.getAllRelations({ keys: include ?? [] });
 		let value = object instanceof FrostObject ? object.flatten() : object;
 		let id = object.id;
@@ -412,7 +412,7 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param {ListenToNestedChanges} listenToNestedChanges - see {@link ListenToNestedChanges}.
 	 * @returns an Observable of the object instance with related objects that were given in the include parameter
 	 */
-	getRelatedObservable(object: any, include?: Include, listenToNestedChanges?: ListenToNestedChanges): Observable<T> {
+	getRelatedObservable(object: any, include?: Include<T>, listenToNestedChanges?: ListenToNestedChanges): Observable<T> {
 		let relations = this.getAllRelations({ keys: include ?? [] });
 		let value = object instanceof FrostObject ? object.flatten() : object;
 		let id = object.id;
@@ -503,7 +503,7 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param {ConnectOptions} connect - see {@link ConnectOptions}.
 	 * @returns an object containing the update map and the new node id
 	 */
-	async add(object: T, connect?: ConnectOptions): Promise<{ id }> {
+	async add(object: T, connect?: ConnectOptions<T>): Promise<{ id }> {
 		const { map: updates, id } = await this.getAddMap(object, connect);
 		await update(ref(this.db), updates);
 		return { id };
@@ -523,7 +523,7 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param {ConnectOptions} connect - see {@link ConnectOptions}.
 	 * @returns an object containing the update map and the new node id
 	 */
-	async getAddMap(object: T, connect?: ConnectOptions): Promise<{ map: any; id: string }> {
+	async getAddMap(object: T, connect?: ConnectOptions<T>): Promise<{ map: any; id: string }> {
 		let data = JSON.parse(JSON.stringify(object));
 
 		const newKey = data.id ?? push(child(ref(this.db), this.collectionPath)).key;
@@ -553,7 +553,7 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param disconnect - see {@link DisconnectOptions}.
 	 * @returns an object containing the update map
 	 */
-	async getUpdateMap(object: T, connect?: ConnectOptions, disconnect?: DisconnectOptions): Promise<{ map: any }> {
+	async getUpdateMap(object: T, connect?: ConnectOptions<T>, disconnect?: DisconnectOptions<T>): Promise<{ map: any }> {
 		let data = JSON.parse(JSON.stringify(object));
 		if (!data.id) throw new Error("Can't add child to node: " + this.collectionPath);
 
@@ -715,7 +715,7 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param {ConnectOptions} connect -  see {@link ConnectOptions}.
 	 * @param disconnect - see {@link DisconnectOptions}.
 	 */
-	async update(object: T, connect?: ConnectOptions, disconnect?: DisconnectOptions): Promise<void> {
+	async update(object: T, connect?: ConnectOptions<T>, disconnect?: DisconnectOptions<T>): Promise<void> {
 		const { map: updates } = await this.getUpdateMap(object, connect, disconnect);
 		await update(ref(this.db), updates);
 	}
@@ -730,7 +730,7 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param disconnect - see {@link DisconnectOptions}
 	 * @returns an object containing the update map
 	 */
-	async getDeleteMap(object: T, disconnect?: DisconnectOptions): Promise<{ map: any }> {
+	async getDeleteMap(object: T, disconnect?: DisconnectOptions<T>): Promise<{ map: any }> {
 		let map = (await this.getUpdateMap(object, undefined, disconnect ?? "all")).map;
 		map[join(this.collectionPath, object.id!)] = null;
 		return { map };
@@ -747,7 +747,7 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param disconnect - see {@link DisconnectOptions}.
 	 *
 	 */
-	async delete(object: T, disconnect?: DisconnectOptions): Promise<void> {
+	async delete(object: T, disconnect?: DisconnectOptions<T>): Promise<void> {
 		const { map: updates } = await this.getDeleteMap(object, disconnect);
 		await update(ref(this.db), updates);
 	}
@@ -799,7 +799,7 @@ export abstract class FrostApi<T extends FrostObject> {
  *```
 
  */
-export type DisconnectOptions = undefined | "all" | Record<string, "all" | true | string | string[]>;
+export type DisconnectOptions<T extends FrostObject> = undefined | "all" | Record<KeysOfEntriesWithRelation<T>, "all" | true | string | string[]>;
 
 /**
  * The related instances to connect
@@ -843,7 +843,7 @@ export type DisconnectOptions = undefined | "all" | Record<string, "all" | true 
  * }
  * ```
  */
-export type ConnectOptions = Record<string, string | string[]> | undefined;
+export type ConnectOptions<T extends FrostObject> = Record<KeysOfEntriesWithRelation<T>, string | string[]> | undefined;
 
 /**
  * an array of the property names with relations that you want to be included in the fetch request.
@@ -851,7 +851,7 @@ export type ConnectOptions = Record<string, string | string[]> | undefined;
  * if the array is empty or undefined no relations will be included
  *
  */
-export type Include = string[] | undefined;
+export type Include<T extends FrostObject> = KeysOfEntriesWithRelation<T>[] | undefined;
 /**
  * This helps you determine which relation you want to listen to changes from.
  * if the value is:

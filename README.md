@@ -1,7 +1,7 @@
 # What is [Frost](https://frost.sami-mishal.online/)?
-<div style="margin: auto 12rem; background-color: #236bfe; padding: 2rem; border-radius: 2rem">
-<div style="border-radius: 100%; background-color: white; height: 13rem;width: 13rem; align-items: center; justify-content: center; display: flex; margin: auto; "><img style="height: 12rem; width: 12rem; " src="https://frost.sami-mishal.online/img/logo.svg"/></div></div>
-
+<!-- <div style="margin: auto 12rem; background-color: #236bfe; padding: 2rem; border-radius: 2rem">
+<div style="border-radius: 100%; background-color: white; height: 13rem;width: 13rem; align-items: center; justify-content: center; display: flex; margin: auto; "><img style="height: 12rem; width: 12rem; " src="https://frost.sami-mishal.online/img/logo.svg"/></div></div> -->
+<img src="https://frost.sami-mishal.online/img/icon_small.png"/>
 
 [Frost](https://frost.sami-mishal.online/) is an [ORM](https://en.wikipedia.org/wiki/Object%E2%80%93relational_mapping) (Object Relational Mapping) Library that utilizes Typescript Decorators to simplify working with [Firebases's Realtime DB](https://firebase.google.com/products/realtime-database).
 Frost Focuses on the relations between the database nodes and generates all the needed code for the developer to fetch these nodes with the ones related to them.

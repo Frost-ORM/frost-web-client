@@ -127,4 +127,4 @@ export const Serialize = <T, P>({
  * }
  * ```
  */
-export const DateSerializer  = <T>()=> Serialize<T,Date>({serialize:(value)=>value.toString(),deserialize:(value)=> new Date(value)})
+export const DateSerializer  = <T>()=> Serialize<T,Date>({serialize:(value)=>value.toISOString(),deserialize:(value)=> new Date(value)})

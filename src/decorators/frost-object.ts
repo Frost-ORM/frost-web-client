@@ -1,7 +1,8 @@
 import * as _ from "lodash";
 import { DATA_REFERENCE, SYMBOL_PREFIX } from "../helpers/consts";
 import { slashToDotJoin } from "../helpers/slashToDotJoin";
-import { OmitAllFunctions } from "../types/omit";
+import { KeysOfEntriesWithType } from "../types-helpers/entries";
+import { OmitAllFunctions } from "../types-helpers/omit";
 import { ExcludedSymbol } from "./exclude";
 import { NodeRelationsSymbol, Prop, RelationTypes, __frost__relations } from "./relation";
 import { Serializers, SerializeSymbol } from "./serialize";
@@ -183,3 +184,4 @@ export class FrostObject<C = {id?:string}>{
 	}
 }
 export type IFrostObject<T extends FrostObject> = Omit<typeof FrostObject, "new"> & { new (...args: any[]): T };
+export type KeysOfEntriesWithRelation<T extends FrostObject> = Exclude<KeysOfEntriesWithType<T,Function|undefined>,KeysOfEntriesWithType<FrostObject,Function>>

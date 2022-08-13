@@ -1,6 +1,6 @@
-import { EntriesWithValueOfType, KeysOfEntries } from "./entries"
+import { EntriesWithType, KeysOfEntries } from "./entries"
 
-export type OmitType<E,T> = Omit<E, KeysOfEntries<EntriesWithValueOfType<E, T>>>
+export type OmitType<E,T> = Omit<E, KeysOfEntries<EntriesWithType<E, T>>>
 
 export type OmitNever<T> = OmitType<T,never>
 
