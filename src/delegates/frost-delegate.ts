@@ -23,30 +23,20 @@ import {
 	switchMap,
 	throwError,
 } from "rxjs";
+import { Frost } from "../frost";
 import { join } from "../helpers/join";
+import { isNotNullNorUndefined, mapClear } from "../helpers/nullOrUndefined";
 import { observable } from "../helpers/observable";
 import { resolve } from "../helpers/resolve";
 import { slashToDotJoin } from "../helpers/slashToDotJoin";
 import { trueOrNull } from "../helpers/trueOrNull";
 import { valueOrNull } from "../helpers/valueOrNull";
-import { Frost } from "../frost";
-import { FrostObject, IFrostObject, KeysOfEntriesWithRelation } from "./frost-object";
-import { ALL_RELATIONS, NodeRelationsSymbol, Relations, RelationTypes, __frost__relations } from "./relation";
-import { ClassOf } from "../types-helpers/constructor"
+import { FetchReturnType, Model, Types, With } from "../global-types";
+import { ALL_RELATIONS, Relation, RelationTypes, } from "./relation";
 
-export type IFrostApi = ClassOf<FrostApi<FrostObject>>
-export abstract class FrostApi<T extends FrostObject> {
-	/**
-	 *
-	 * @internal
-	 */
-	collectionPath: string;
-	// private many_to_many_val = {connected:true}
-	/**
-	 *
-	 * @internal
-	 */
-	entity: IFrostObject<T>;
+// todo add serializing logic
+export abstract class FrostDelegate<T extends Types = Types> {
+	
 	/**
 	 *
 	 * @internal
@@ -56,9 +46,25 @@ export abstract class FrostApi<T extends FrostObject> {
 	 *
 	 * @internal
 	 */
-	constructor() {
+
+	 public collectionPath:string
+	 protected entityName:string
+	 protected relations:Record<PropertyKey,Relation>
+
+	constructor(
+		/**
+		 *
+		 * @internal
+		 */
+
+		protected model:Model,
+		) {
 		if (Frost.initialized) {
 			this.db = Frost.firebaseDB;
+
+			this.collectionPath = model.path
+			this.entityName = model.name
+			this.relations = Relation.fromModel(model,'map')
 		} else {
 			throw new Error("Frost is not initialized");
 		}
@@ -68,31 +74,12 @@ export abstract class FrostApi<T extends FrostObject> {
 	 *
 	 * @internal
 	 */
-	getMetadata = (symbol: string | symbol) => Reflect.getMetadata(symbol, this.entity.prototype);
-
-	/**
-	 *
-	 * @internal
-	 */
-	getNodeRelations = (): string[] => this.getMetadata(NodeRelationsSymbol) ?? [];
-
-	/**
-	 *
-	 * @internal
-	 */
-	getMetadataKeys = () => Reflect.getMetadataKeys(this.entity.prototype);
-
-	/**
-	 *
-	 * @internal
-	 */
-	getAllRelations = (options?: { type?: RelationTypes[]; keys?: string[] }): Relations[] => {
+	getAllRelations = (options?: { type?: RelationTypes[]; keys?: string[] }): Relation[] => {
 		let type = options?.type || ALL_RELATIONS;
 		let keys = options?.keys;
-		return this.getNodeRelations()
-			.map((key) => __frost__relations[key])
+		return Object.values(this.relations)
 			.filter(
-				(relation: Relations) =>
+				(relation: Relation) =>
 					type.includes(relation.relationType) &&
 					(!keys || keys.includes(relation.fields[0]) || keys.includes(relation.fields[1]))
 			);
@@ -102,33 +89,15 @@ export abstract class FrostApi<T extends FrostObject> {
 	 *
 	 * @internal
 	 */
-	getPropsWithRelation = (options?: { type?: RelationTypes[]; keys?: string[] }): Relations[] => {
+	getPropsWithRelation = (options?: { type?: RelationTypes[]; keys?: string[] }): Relation[] => {
 		let type = options?.type || ALL_RELATIONS;
 		let keys = options?.keys;
 
-		return this.getNodeRelations()
-			.map((key) => __frost__relations[key])
-			.filter((relation) => relation.isLocal(this.entity))
+		return Object.values(this.relations)
+			.filter((relation) => relation.isLocal(this.entityName))
 			.filter(
-				(relation: Relations) =>
+				(relation: Relation) =>
 					type.includes(relation.relationType) && (!keys || keys.includes(relation.fields[0]))
-			);
-	};
-
-	/**
-	 *
-	 * @internal
-	 */
-	getRelatedProps = (options?: { type?: RelationTypes[]; keys?: string[] }): Relations[] => {
-		let type = options?.type || ALL_RELATIONS;
-		let keys = options?.keys;
-
-		return this.getNodeRelations()
-			.map((key) => __frost__relations[key])
-			.filter((relation) => relation && relation.isForeign(this.entity))
-			.filter(
-				(relation: Relations) =>
-					type.includes(relation.relationType) && (!keys || keys.includes(relation.fields[1]))
 			);
 	};
 
@@ -161,12 +130,19 @@ export abstract class FrostApi<T extends FrostObject> {
 	}
 
 	/**
+	 * @internal
+	 */
+	private getIncludeArray(include?:T["IncludeOptions"]):string[]{
+		return include? Object.entries(include).filter(([_,value])=>value).map(([key,])=>key): undefined;
+	}
+	
+	/**
 	 * Just like the {@link https://firebase.google.com/docs/reference/js/database.md#query | query} function in the firebaseDB,
 	 *  but the first parameter is options for relations then is spread parameter like {@link https://firebase.google.com/docs/reference/js/database.md#query | query}
 	 *
-	 * Just like {@link FrostApi.observeMany} but with promises instead of observables.
+	 * Just like {@link FrostDelegate.observeMany} but with promises instead of observables.
 	 *
-	 * @see {@link FrostApi.observeMany}
+	 * @see {@link FrostDelegate.observeMany}
 	 * @see {@link Include}.
 	 * @see {@link https://firebase.google.com/docs/reference/js/database.queryconstraint | QueryConstraint}.
 	 *
@@ -175,18 +151,18 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param {QueryConstraint[]} queryConstraints - see {@link https://firebase.google.com/docs/reference/js/database.queryconstraint | QueryConstraint}.
 	 * @returns the query results with related objects that were given in the include parameter
 	 */
-	async findMany(options: { include?: Include<T> } | null, ...queryConstraints: QueryConstraint[]): Promise<T[]> {
+	async findMany<I extends T["IncludeOptions"]>(options: { include?: I } | null, ...queryConstraints: QueryConstraint[]): Promise<FetchReturnType<T,I>[]> {
 		try {
 			const [snapshot, error] = await resolve(get(query(ref(this.db, this.collectionPath), ...queryConstraints)));
 			if (error && !snapshot) {
 				console.error(error);
 				throw error;
 			}
-			let output: T[] = [];
+			let output: FetchReturnType<T,I>[] = [];
 			if (snapshot!.exists()) {
-				let values = snapshot!.val();
+				let values:any = snapshot!.val();
 				for (let value of Object.values(values)) {
-					output.push(await this.getRelated(value, options?.include));
+					output.push(await this.getRelated(value as any,options.include));
 				}
 				return output;
 			}
@@ -201,16 +177,16 @@ export abstract class FrostApi<T extends FrostObject> {
 	/**
 	 * Returns the object with the given id and containing the related instances with it (depending on the include parameter)
 	 *
-	 * Just like {@link FrostApi.observeOne} but with promises instead of observables
+	 * Just like {@link FrostDelegate.observeOne} but with promises instead of observables
 	 *
-	 * @see {@link FrostApi.observeOne}
+	 * @see {@link FrostDelegate.observeOne}
 	 * @see {@link Include}.
 	 *
 	 * @param id - The object that you want to get the related objects from. (doesn't have to be an instantiated object could be the data map that was fetched manually )
 	 * @param {Include} include - see {@link Include}.
 	 * @returns the object instance of the given id with related objects that were given in the include parameter
 	 */
-	async findOne(id: string, include?: Include<T>): Promise<T> {
+	async findOne<I extends T["IncludeOptions"]>(id: string, include?: T["IncludeOptions"]): Promise<FetchReturnType<T,I>> {
 		try {
 			let [snapshot, error] = await resolve(get(child(ref(this.db), join(this.collectionPath, id))));
 			if (error && !snapshot) {
@@ -245,33 +221,36 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @defaultValue options.listenToNestedChanges false
 	 * @returns an Observable of the query results with related objects that were given in the include parameter
 	 */
-	observeMany(
-		options: {
-			include?: Include<T>;
+	observeMany<I extends T["IncludeOptions"]>(
+		options?: {
+			include?: T["IncludeOptions"];
 			listenToNestedChanges?: ListenToNestedChanges;
 			debounceDuration?: number;
 		} | null,
 		...queryConstraints: QueryConstraint[]
-	): Observable<T[]> {
+	): Observable<FetchReturnType<T,I>[]> {
 		// TODO improve like listen
-		let listenToNestedChanges = Object.hasOwn(options ?? {}, "listenToNestedChanges")
+		let listenToNestedChanges = isNotNullNorUndefined(options?.listenToNestedChanges)
 			? options.listenToNestedChanges
 			: false;
-		let debounceDuration = options.debounceDuration ?? 500;
+			// console.log({listenToNestedChanges})
+		let debounceDuration = options?.debounceDuration ?? 500;
 		try {
 			return observable(query(ref(this.db, this.collectionPath), ...queryConstraints)).pipe(
 				switchMap((snapshot) => {
 					// console.log(snapshot);
 					if (snapshot.exists()) {
 						return combineLatest(
-							Object.values(snapshot.val()).map((value) => {
+							Object.values(snapshot.val()).map((value:any) => {
 								return listenToNestedChanges
 									? this.getRelatedObservable(value, options?.include)
 									: from(this.getRelated(value, options?.include));
 							})
 						);
 					} else {
-						return throwError(() => new Error("Snapshot Doesn't exits"));
+						// return throwError(() => new Error("Snapshot Doesn't exits"));
+						console.error( new Error("Snapshot Doesn't exits"));
+						return of([]);
 					}
 				}),
 				debounceTime(debounceDuration)
@@ -294,7 +273,7 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @defaultValue listenToNestedChanges false
 	 * @returns an Observable of the object instance of the given id with related objects that were given in the include parameter
 	 */
-	observeOne(id: string, include?: Include<T>, listenToNestedChanges: ListenToNestedChanges = false) {
+	observeOne<I extends T["IncludeOptions"]>(id: string, include?: T["IncludeOptions"], listenToNestedChanges: ListenToNestedChanges = false):Observable<FetchReturnType<T,I>> {
 		try {
 			// console.log("FrostApi::listen", this.entity, this.collectionPath);
 			let object = observable(child(ref(this.db), join(this.collectionPath, id)));
@@ -309,12 +288,14 @@ export abstract class FrostApi<T extends FrostObject> {
 						}
 						return from(this.getRelated(value, include));
 					} else {
-						return throwError(() => new Error("Snapshot Doesn't exits"));
+						// return throwError(() => new Error("Snapshot Doesn't exits"));
+						console.error(new Error("Snapshot Doesn't exits"));
+						return of(null)
 					}
 				})
 			);
 			return combineLatest({ object, relations }).pipe(
-				map(({ object, relations }) => new this.entity({ ...relations, ...object }))
+				map(({ object, relations }) => this.deserialize<I>({ ...relations, ...object }))
 			);
 		} catch (error) {
 			console.log(error);
@@ -326,21 +307,25 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * Returns the object with the related instances with it (depending on the include parameter)
 	 * Use this if you have an object instance without the related instances you want.
 	 *
-	 * Same as {@link FrostApi.getRelatedObservable} but with promises instead of observables
+	 * Same as {@link FrostDelegate.getRelatedObservable} but with promises instead of observables
 	 *
-	 * @see {@link FrostApi.getRelatedObservable}
+	 * @see {@link FrostDelegate.getRelatedObservable}
 	 * @see {@link Include}.
 	 *
 	 * @param object - The object that you want to get the related objects from. (doesn't have to be an instantiated object could be the data map that was fetched manually )
 	 * @param {Include} include - see {@link Include}.
 	 * @returns an object instance with related objects that were given in the include parameter
 	 */
-	async getRelated(object: any, include?: Include<T>): Promise<T> {
-		let relations = this.getAllRelations({ keys: include ?? [] });
-		let value = object instanceof FrostObject ? object.flatten() : object;
+
+
+	async getRelated<I extends T["IncludeOptions"]>(object: T["Model"] & T["FrostMetadata"], include?: T["IncludeOptions"]):  Promise<FetchReturnType<T,I>> {
+		let _include = this.getIncludeArray(include)
+
+		let relations = this.getAllRelations({ keys: _include ?? [] });
+		let value:any = object;
 		let id = object.id;
 		for (let _rel of relations) {
-			let rel = _rel.withSide(this.entity);
+			let rel = _rel.withSide(this.entityName);
 			switch (rel.relationType) {
 				case RelationTypes.ONE_TO_ONE:
 					{
@@ -378,26 +363,17 @@ export abstract class FrostApi<T extends FrostObject> {
 					break;
 				case RelationTypes.MANY_TO_MANY:
 					{
-						// value[rel.localField] = await (
-						// 	await get(
-						// 		query(
-						// 			ref(this.db, rel.foreignCollectionPath),
-						// 			orderByChild(join(rel.foreignReference, id, "connected")),
-						// 			equalTo(true)
-						// 		)
-						// 	)
-						// ).val();
-						value[rel.localField] = await FrostApi.getMany(
+						value[rel.localField] = await FrostDelegate.getMany(
 							this.db,
 							rel.foreignCollectionPath,
-							...(this.entity.getConnectedKeys(rel.localField, object) ?? [])
+							...(this.getConnectedKeysByRelation(rel, object) ?? [])
 						);
 					}
 					break;
 			}
 		}
-		// console.log("getRelated", { value });
-		return new this.entity(value);
+
+		return this.deserialize<I>(value);
 	}
 
 	/**
@@ -412,13 +388,19 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param {ListenToNestedChanges} listenToNestedChanges - see {@link ListenToNestedChanges}.
 	 * @returns an Observable of the object instance with related objects that were given in the include parameter
 	 */
-	getRelatedObservable(object: any, include?: Include<T>, listenToNestedChanges?: ListenToNestedChanges): Observable<T> {
-		let relations = this.getAllRelations({ keys: include ?? [] });
-		let value = object instanceof FrostObject ? object.flatten() : object;
+	getRelatedObservable<I extends T["IncludeOptions"],R = FetchReturnType<T,I>>(
+		object: T["Model"] & T["FrostMetadata"],
+		include?: T["IncludeOptions"],
+		listenToNestedChanges?: ListenToNestedChanges
+	): Observable<FetchReturnType<T,I>> {
+		let _include = this.getIncludeArray(include)
+
+		let relations = this.getAllRelations({ keys: _include ?? [] });
+		let value:any = object;
 		let id = object.id;
 		let observables: Record<string, Observable<any>> = {};
 		for (let _rel of relations) {
-			let rel = _rel.withSide(this.entity);
+			let rel = _rel.withSide(this.entityName);
 			switch (rel.relationType) {
 				case RelationTypes.ONE_TO_ONE:
 					{
@@ -460,14 +442,7 @@ export abstract class FrostApi<T extends FrostObject> {
 					break;
 				case RelationTypes.MANY_TO_MANY:
 					{
-						// observables[rel.localField] = observable(
-						// 	query(
-						// 		ref(this.db, join(rel.foreignCollectionPath)),
-						// 		orderByChild(join(rel.foreignReference, id, "connected")),
-						// 		equalTo(true)
-						// 	)
-						// ).pipe(map((value) => value.val()));
-						value[rel.localField] = FrostApi.observeMany(
+						value[rel.localField] = FrostDelegate.observeMany(
 							this.db,
 							rel.foreignCollectionPath,
 
@@ -477,7 +452,7 @@ export abstract class FrostApi<T extends FrostObject> {
 									listenToNestedChanges?.[RelationTypes.MANY_TO_MANY]
 								),
 							},
-							...(this.entity.getConnectedKeys(rel.localField, object) ?? [])
+							...(this.getConnectedKeysByRelation(rel, object) ?? [])
 						);
 					}
 					break;
@@ -485,8 +460,8 @@ export abstract class FrostApi<T extends FrostObject> {
 		}
 		// console.log({ value });
 		return Object.keys(observables).length
-			? combineLatest(observables).pipe<T>(map((values) => new this.entity({ ...value, ...values })))
-			: of(new this.entity({ ...value }));
+			? combineLatest(observables).pipe<FetchReturnType<T,I>>(map((values) => this.deserialize<I>({ ...value, ...values })))
+			: of(this.deserialize<I>({ ...value }));
 	}
 
 	/**
@@ -503,7 +478,7 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param {ConnectOptions} connect - see {@link ConnectOptions}.
 	 * @returns an object containing the update map and the new node id
 	 */
-	async add(object: T, connect?: ConnectOptions<T>): Promise<{ id }> {
+	async add(object: T["FullModel"], connect?: T["ConnectOptions"]): Promise<{ id }> {
 		const { map: updates, id } = await this.getAddMap(object, connect);
 		await update(ref(this.db), updates);
 		return { id };
@@ -523,7 +498,7 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param {ConnectOptions} connect - see {@link ConnectOptions}.
 	 * @returns an object containing the update map and the new node id
 	 */
-	async getAddMap(object: T, connect?: ConnectOptions<T>): Promise<{ map: any; id: string }> {
+	async getAddMap(object: T["FullModel"], connect?: T["ConnectOptions"]): Promise<{ map: any; id: string }> {
 		let data = JSON.parse(JSON.stringify(object));
 
 		const newKey = data.id ?? push(child(ref(this.db), this.collectionPath)).key;
@@ -553,18 +528,21 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param disconnect - see {@link DisconnectOptions}.
 	 * @returns an object containing the update map
 	 */
-	async getUpdateMap(object: T, connect?: ConnectOptions<T>, disconnect?: DisconnectOptions<T>): Promise<{ map: any }> {
+	async getUpdateMap(
+		object: T["FullModel"],
+		connect?: T["ConnectOptions"],
+		disconnect?: T["DisconnectOptions"]
+	): Promise<{ map: any }> {
 		let data = JSON.parse(JSON.stringify(object));
 		if (!data.id) throw new Error("Can't add child to node: " + this.collectionPath);
 
 		const updates: any = {};
 
 		let _disconnect: Record<string, "all" | true | string | string[]> | undefined = undefined;
-		if (typeof disconnect === "string") {
+		if ((typeof disconnect === "string" && disconnect === 'all') || (typeof disconnect === "boolean" && disconnect === true)) {
 			_disconnect = object.getAllConnectedKeys();
-			// console.log({ _disconnect });
-		} else {
-			_disconnect = disconnect;
+		} else if(disconnect) {
+			_disconnect = mapClear(disconnect);
 		}
 		if (connect || _disconnect) {
 			for (let { operation, map } of [
@@ -581,85 +559,91 @@ export abstract class FrostApi<T extends FrostObject> {
 					keys: Object.keys(map ?? []),
 				});
 				if (!map) continue;
-				// console.log(this.entity.name, { operation, map, relations });
+				// console.log(this.entityName, { operation, map, relations });
 				for (const _rel of relations) {
-					let rel = _rel.withSide(this.entity);
+					let rel = _rel.withSide(this.entityName);
 					switch (rel.relationType) {
 						case RelationTypes.ONE_TO_ONE:
 							let connectedID = map[rel.localField];
-							if (connectedID === true || connectedID === 'all') {
-								let temp = object.getConnectedKeys(rel.localField)?.[0];
-								if (!temp) continue;
-								connectedID = temp;
-							}
-							if (typeof connectedID === "string") {
-								_.set(
-									data,
-									slashToDotJoin(rel.localReference),
-									valueOrNull(operation === "connect", connectedID)
-								);
-								updates[join(rel.foreignCollectionPath, connectedID, rel.foreignReference)] =
-									valueOrNull(operation === "connect", data.id);
-							} else {
-								throw new Error(
-									"connect[" +
-										rel.localField +
-										"] should be a string or `true` in entity (" +
-										rel.sides[0]().name +
-										")"
-								);
+							if (connectedID) {
+								if (connectedID === true || connectedID === "all") {
+									let temp = object.getConnectedKeys(rel.localField)?.[0];
+									if (!temp) continue;
+									connectedID = temp;
+								}
+								if (typeof connectedID === "string") {
+									_.set(
+										data,
+										slashToDotJoin(rel.localReference),
+										valueOrNull(operation === "connect", connectedID)
+									);
+									updates[join(rel.foreignCollectionPath, connectedID, rel.foreignReference)] =
+										valueOrNull(operation === "connect", data.id);
+								} else {
+									throw new Error(
+										"connect[" +
+											rel.localField +
+											"] should be a string or `true` in entity (" +
+											rel.sides[0].name +
+											")"
+									);
+								}
 							}
 							break;
 						case RelationTypes.ONE_TO_MANY:
 							// todo add option disconnect all
 							if (rel.isMaster) {
 								let toBeUpdated = map[rel.localField];
-								if (toBeUpdated === "all" || toBeUpdated === true) {
-									toBeUpdated = object.getConnectedKeys(rel.localField) ?? [];
-								}
-								if (Array.isArray(toBeUpdated)) {
-									toBeUpdated.forEach((element) => {
-										_.set(
-											data,
-											slashToDotJoin(rel.localReference, element),
-											trueOrNull(operation === "connect")
+								if (toBeUpdated) {
+									if (toBeUpdated === "all" || toBeUpdated === true) {
+										toBeUpdated = object.getConnectedKeys(rel.localField) ?? [];
+									}
+									if (Array.isArray(toBeUpdated)) {
+										toBeUpdated.forEach((element) => {
+											_.set(
+												data,
+												slashToDotJoin(rel.localReference, element),
+												trueOrNull(operation === "connect")
+											);
+											updates[join(rel.foreignCollectionPath, element, rel.foreignReference)] =
+												valueOrNull(operation === "connect", data.id);
+										});
+									} else {
+										throw new Error(
+											"connect[" +
+												rel.localField +
+												"] should be an array in entity (" +
+												this.entityName +
+												")"
 										);
-										updates[join(rel.foreignCollectionPath, element, rel.foreignReference)] =
-											valueOrNull(operation === "connect", data.id);
-									});
-								} else {
-									throw new Error(
-										"connect[" +
-											rel.localField +
-											"] should be an array in entity (" +
-											this.entity.name +
-											")"
-									);
+									}
 								}
 							} else {
 								let toBeUpdated = map[rel.localField];
-								if (toBeUpdated === true || connectedID === 'all') {
-									let temp = object.getConnectedKeys(rel.localField)?.[0];
-									if (!temp) continue;
-									toBeUpdated = temp;
-								}
-								if (typeof toBeUpdated === "string") {
-									_.set(
-										data,
-										slashToDotJoin(rel.localReference),
-										valueOrNull(operation === "connect", toBeUpdated)
-									);
-									updates[
-										join(rel.foreignCollectionPath, toBeUpdated, rel.foreignReference, data.id)
-									] = trueOrNull(operation === "connect");
-								} else {
-									throw new Error(
-										"connect[" +
-											rel.localField +
-											"] should be a string or `true` in entity (" +
-											rel.sides[0]().name +
-											")"
-									);
+								if (toBeUpdated) {
+									if (toBeUpdated === true || toBeUpdated === "all") {
+										let temp = object.getConnectedKeys(rel.localField)?.[0];
+										if (!temp) continue;
+										toBeUpdated = temp;
+									}
+									if (typeof toBeUpdated === "string") {
+										_.set(
+											data,
+											slashToDotJoin(rel.localReference),
+											valueOrNull(operation === "connect", toBeUpdated)
+										);
+										updates[
+											join(rel.foreignCollectionPath, toBeUpdated, rel.foreignReference, data.id)
+										] = trueOrNull(operation === "connect");
+									} else {
+										throw new Error(
+											"connect[" +
+												rel.localField +
+												"] should be a string or `true` in entity (" +
+												rel.sides[0].name +
+												")"
+										);
+									}
 								}
 							}
 
@@ -668,28 +652,30 @@ export abstract class FrostApi<T extends FrostObject> {
 							{
 								// todo add option disconnect all
 								let toBeUpdated = map[rel.localField];
-								if (toBeUpdated === "all" || toBeUpdated === true) {
-									toBeUpdated = object.getConnectedKeys(rel.localField) ?? [];
-								}
-								if (Array.isArray(toBeUpdated)) {
-									toBeUpdated.forEach((element: string) => {
-										_.set(
-											data,
-											slashToDotJoin(rel.localReference, element),
-											valueOrNull(operation === "connect", { connected: true })
+								if (toBeUpdated) {
+									if (toBeUpdated === "all" || toBeUpdated === true) {
+										toBeUpdated = object.getConnectedKeys(rel.localField) ?? [];
+									}
+									if (Array.isArray(toBeUpdated)) {
+										toBeUpdated.forEach((element: string) => {
+											_.set(
+												data,
+												slashToDotJoin(rel.localReference, element),
+												valueOrNull(operation === "connect", { connected: true })
+											);
+											updates[
+												join(rel.foreignCollectionPath, element, rel.foreignReference, data.id)
+											] = valueOrNull(operation === "connect", { connected: true });
+										});
+									} else {
+										throw new Error(
+											"connect[" +
+												rel.localField +
+												"] should be an array in entity (" +
+												this.entityName +
+												")"
 										);
-										updates[
-											join(rel.foreignCollectionPath, element, rel.foreignReference, data.id)
-										] = valueOrNull(operation === "connect", { connected: true });
-									});
-								} else {
-									throw new Error(
-										"connect[" +
-											rel.localField +
-											"] should be an array in entity (" +
-											this.entity.name +
-											")"
-									);
+									}
 								}
 							}
 							break;
@@ -715,7 +701,7 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param {ConnectOptions} connect -  see {@link ConnectOptions}.
 	 * @param disconnect - see {@link DisconnectOptions}.
 	 */
-	async update(object: T, connect?: ConnectOptions<T>, disconnect?: DisconnectOptions<T>): Promise<void> {
+	async update(object: T, connect?: T["ConnectOptions"], disconnect?: T["DisconnectOptions"]): Promise<void> {
 		const { map: updates } = await this.getUpdateMap(object, connect, disconnect);
 		await update(ref(this.db), updates);
 	}
@@ -730,7 +716,7 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * @param disconnect - see {@link DisconnectOptions}
 	 * @returns an object containing the update map
 	 */
-	async getDeleteMap(object: T, disconnect?: DisconnectOptions<T>): Promise<{ map: any }> {
+	async getDeleteMap(object: T["FullModel"], disconnect?: T["DisconnectOptions"]): Promise<{ map: any }> {
 		let map = (await this.getUpdateMap(object, undefined, disconnect ?? "all")).map;
 		map[join(this.collectionPath, object.id!)] = null;
 		return { map };
@@ -740,118 +726,51 @@ export abstract class FrostApi<T extends FrostObject> {
 	 * Removes the Object from the database and disconnects related objects depending on the disconnect parameter
 	 *
 	 *
-	 * @see {@link FrostApi.getDeleteMap | getDeleteMap}.
+	 * @see {@link FrostDelegate.getDeleteMap | getDeleteMap}.
 	 * @see {@link DisconnectOptions}
 	 *
 	 * @param object - The object instance to be deleted from the database (the object instance should be the one fetched from Frost or you can do it manually be constructing an instance)
 	 * @param disconnect - see {@link DisconnectOptions}.
 	 *
 	 */
-	async delete(object: T, disconnect?: DisconnectOptions<T>): Promise<void> {
+	async delete(object: T["FullModel"], disconnect?: T["DisconnectOptions"]): Promise<void> {
 		const { map: updates } = await this.getDeleteMap(object, disconnect);
 		await update(ref(this.db), updates);
 	}
+
+	/**
+ * 
+ * @param propertyName - the name of the property with the relation which keys' you require.
+ * @param object - the object instance that you want to get the keys from
+ * @returns an array containing the ids of the instances that are connected. if there are no connected keys or the property name is incorrect then there'll be no key-value pair for the specific property
+ */
+	getConnectedKeys(propertyName: string, object: T["FullModel"]): string[] | null{
+		return getConnectedKeys(this.model,Object.values(this.relations),propertyName,object)
+	}
+
+	/**
+	 * For local fields
+	 * @param relation 
+	 * @param object 
+	 * @returns 
+	 */
+	private getConnectedKeysByRelation(relation:Relation, object: any): string[] | null {
+		return getConnectedKeysByRelation(this.model,relation,object)
+	}
+
+	private serialize(object:T["FullModel"]): any {
+		throw new Error("Not Implemented");
+		
+	}
+	private deserialize<I extends T["IncludeOptions"] = T["IncludeOptions"]>(data:any): FetchReturnType<T,I> {
+		throw new Error("Not Implemented");
+
+		return data
+	}
 }
 
-/**
- * The related instances to disconnect
- * 
- * - Either the string `all` which will disconnect all relations or
- * - undefined which won't disconnect any relations or
- * - a map with the keys of the properties to disconnect and the possible values are one of the following:
- * 	- `all`|true, works with all relation types. will disconnect everything
- * 	- Incase of One to One: the string of the id of the connected instance
- * 	- Incase of Many to Many: an array of the ids of the connected instances
- * 	- Incase of Many to Many:
- * 		- From the One side:  an array of the ids of the connected instances
- * 		- From the Many side: the string of the id of the connected instance
- * @example All Relations
- * ```json
- * "all"
- *```
 
- * @example All specific relations
- * ```json
- * {
- * 	"posts": "all",
- * 	"comments": "all",
- * }
- * //OR 
- * {
- * 	"posts": true,
- *  "comments": true,
- * }
- * ```
- * @example  Disconnect specific nodes
- * ```json
- * {
- * 	"posts": [
- * 		"-N8ZU2tQNvC_1GV5kMa8",
- *		"-N8ZU2w3diHdn0b5AIsB",
- *		"-N8ZU30J_KfcwcRlUcPK",
- *		"-N8ZU33c0V8yIB-7oDV3",
- * ],
- *  "comments": [
- * 		"-N8ZU24sYM2NoXV1NdA2",
- * 		"-N8ZU2oH4rRaaWaA2M8Y",
- * ],
- * }
- *```
 
- */
-export type DisconnectOptions<T extends FrostObject> = undefined | "all" | Record<KeysOfEntriesWithRelation<T>, "all" | true | string | string[]>;
-
-/**
- * The related instances to connect
- *
- * - undefined which won't connect any relations or
- * - a map with the keys of the properties to connect and the possible values are one of the following:
- * 	- Incase of One to One: the string of the id of the instance to be connected
- * 	- Incase of Many to Many: an array of the ids of the instances to be connected
- * 	- Incase of Many to Many:
- * 		- From the One side:  an array of the ids of the instances to be connected
- * 		- From the Many side: the string of the id of the instance to be connected
- *
- * @example Symmetric: One-to-One and Many-to-Many
- * ```json
- * {
- * 	"studentProfileData":"-N8ZU2qq5erVSvauDtuR", // One-to-One
- * 	"courses": [
- * 		"-N8ZU2tQNvC_1GV5kMa8",
- *		"-N8ZU2w3diHdn0b5AIsB",
- *		"-N8ZU30J_KfcwcRlUcPK",
- *		"-N8ZU33c0V8yIB-7oDV3",
- * ],// Many-to-Many
- * }
- *```
- *
- * @example One-to-Many (One Side)
- * ```json
- * {
- * 	"posts":[
- *		"-N8ZU2tQNvC_1GV5kMa8",
- *		"-N8ZU2w3diHdn0b5AIsB",
- *		"-N8ZU30J_KfcwcRlUcPK",
- *		"-N8ZU33c0V8yIB-7oDV3",
- *	],
- * }
- * ```
- * @example  One-to-Many (Many Side)
- * ```json
- * {
- * 	"author":"-N8ZU2qq5erVSvauDtuR",
- * }
- * ```
- */
-export type ConnectOptions<T extends FrostObject> = Record<KeysOfEntriesWithRelation<T>, string | string[]> | undefined;
-
-/**
- * an array of the property names with relations that you want to be included in the fetch request.
- *
- * if the array is empty or undefined no relations will be included
- *
- */
-export type Include<T extends FrostObject> = KeysOfEntriesWithRelation<T>[] | undefined;
 /**
  * This helps you determine which relation you want to listen to changes from.
  * if the value is:
@@ -860,3 +779,54 @@ export type Include<T extends FrostObject> = KeysOfEntriesWithRelation<T>[] | un
  * - key-value pairs with the key being {@link RelationTypes} and value being a boolean to determine whether or not to listen to specified type of relations.
  */
 export type ListenToNestedChanges = boolean | Record<RelationTypes, boolean>;
+
+//FIXME Doc
+/**
+ * 
+ * @param propertyName - the name of the property with the relation which keys' you require.
+ * @param object - the object instance that you want to get the keys from
+ * @returns an array containing the ids of the instances that are connected. if there are no connected keys or the property name is incorrect then there'll be no key-value pair for the specific property
+ */
+function getConnectedKeys(model:Model,relations:Relation[],propertyName: string, object: any): string[] | null {
+	let relation = relations.find((rel)=>rel.fields.includes(propertyName))
+
+	if (relation) {
+		relation = relation.withSide(model.name);
+		let keys = _.get(object, slashToDotJoin(relation.localReference));
+		if (!keys) return null;
+		if (
+			relation.relationType === RelationTypes.ONE_TO_ONE ||
+			(relation.relationType === RelationTypes.ONE_TO_MANY && relation.isSlave)
+		) {
+			keys = [keys];
+		} else {
+			keys = Object.keys(keys ?? {});
+		}
+		return keys;
+	}
+	return null;
+}
+//FIXME Doc
+/**
+ * 
+ * @param propertyName - the name of the property with the relation which keys' you require.
+ * @param object - the object instance that you want to get the keys from
+ * @returns an array containing the ids of the instances that are connected. if there are no connected keys or the property name is incorrect then there'll be no key-value pair for the specific property
+ */
+function getConnectedKeysByRelation(model:Model,relation:Relation, object: any): string[] | null {
+	if (relation) {
+		relation = relation.withSide(model.name);
+		let keys = _.get(object, slashToDotJoin(relation.localReference));
+		if (!keys) return null;
+		if (
+			relation.relationType === RelationTypes.ONE_TO_ONE ||
+			(relation.relationType === RelationTypes.ONE_TO_MANY && relation.isSlave)
+		) {
+			keys = [keys];
+		} else {
+			keys = Object.keys(keys ?? {});
+		}
+		return keys;
+	}
+	return null;
+}

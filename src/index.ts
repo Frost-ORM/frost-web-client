@@ -1,4 +1,3 @@
-export * from "./decorators"
-export * from "./get-indices"
+export * from "./delegates"
 export * from "./frost"
 export * from "./types-helpers"
