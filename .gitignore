@@ -27,3 +27,5 @@ yarn-debug.log*
 yarn-error.log*
 /dist
 package-lock.json
+
+frost-orm-frost-web-client-*.tgz

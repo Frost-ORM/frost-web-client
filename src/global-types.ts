@@ -145,6 +145,7 @@ export type Property = {
 	optional?: boolean;
 	isArray?: boolean;
 	type: string;
+	defaultValue?:any;
 };
 
 export type Model = {
@@ -156,16 +157,16 @@ export type Model = {
 
 export type FrostMetadata = {
 	__frost__:{
-		one_to_one?:Record<string,boolean|null|undefined>
-		one_to_many?:Record<string,OneToManyMetadata|null|undefined>
-		many_to_many?:Record<string,ManyToManyMetadata|null|undefined>
+		one_to_one?:Partial<Record<PropertyKey,string|null|undefined>>,
+		one_to_many?:Partial<Record<PropertyKey,OneToManyMetadata|null|undefined>>,
+		many_to_many?:Partial<Record<PropertyKey,ManyToManyMetadata|null|undefined>>,
 	}
 }
 type RelationsFieldsKeysByType = {
-	one_to_many: string,
-    one_to_many_master_fields: string,
-    one_to_many_slave_fields: string,
-    one_to_one: string
+	one_to_many?: string,
+    one_to_many_master_fields?: string,
+    one_to_many_slave_fields?: string,
+    one_to_one?: string
 }
 
 export interface Types{

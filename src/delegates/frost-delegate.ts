@@ -16,6 +16,7 @@ import {
 	combineLatest,
 	debounceTime,
 	distinctUntilChanged,
+	firstValueFrom,
 	from,
 	map,
 	Observable,
@@ -25,7 +26,7 @@ import {
 } from "rxjs";
 import { Frost } from "../frost";
 import { join } from "../helpers/join";
-import { isNotNullNorUndefined, mapClear } from "../helpers/nullOrUndefined";
+import { isNotNullNorUndefined, isNullOrUndefined, mapClear } from "../helpers/nullOrUndefined";
 import { observable } from "../helpers/observable";
 import { resolve } from "../helpers/resolve";
 import { slashToDotJoin } from "../helpers/slashToDotJoin";
@@ -33,8 +34,8 @@ import { trueOrNull } from "../helpers/trueOrNull";
 import { valueOrNull } from "../helpers/valueOrNull";
 import { FetchReturnType, Model, Types, With } from "../global-types";
 import { ALL_RELATIONS, Relation, RelationTypes, } from "./relation";
+import { ArrayValuesType } from "../types-helpers/array";
 
-// todo add serializing logic
 export abstract class FrostDelegate<T extends Types = Types> {
 	
 	/**
@@ -172,6 +173,40 @@ export abstract class FrostDelegate<T extends Types = Types> {
 			console.log(error);
 			throw error;
 		}
+	}	
+	
+	//FIXME fix doc
+	/**
+	 * Just like the {@link https://firebase.google.com/docs/reference/js/database.md#query | query} function in the firebaseDB,
+	 *  but the first parameter is options for relations then is spread parameter like {@link https://firebase.google.com/docs/reference/js/database.md#query | query}
+	 *
+	 * Just like {@link FrostDelegate.observeMany} but with promises instead of observables.
+	 *
+	 * @see {@link FrostDelegate.observeMany}
+	 * @see {@link Include}.
+	 * @see {@link https://firebase.google.com/docs/reference/js/database.queryconstraint | QueryConstraint}.
+	 *
+	 * @param options - options for the query
+	 * @param {Include} options.include - see {@link Include}.
+	 * @param {QueryConstraint[]} queryConstraints - see {@link https://firebase.google.com/docs/reference/js/database.queryconstraint | QueryConstraint}.
+	 * @returns the query results with related objects that were given in the include parameter
+	 */
+	async findMultiple<I extends T["IncludeOptions"],K extends string[]>(keys:K,options?: { include?: I } | null): Promise<Record<ArrayValuesType<K>,FetchReturnType<T,I>>> {
+		try {
+			let promiseMap: Record<ArrayValuesType<K>,Observable<FetchReturnType<T,I>>> = {} as any
+			keys.forEach(
+				(key:ArrayValuesType<K>)=>promiseMap[key] = from(this.findOne<I>(key,options?.include))
+			)
+			return firstValueFrom(
+				combineLatest(
+					promiseMap
+				),
+			)
+	
+		} catch (error) {
+			console.log(error);
+			throw error;
+		}
 	}
 
 	/**
@@ -303,6 +338,36 @@ export abstract class FrostDelegate<T extends Types = Types> {
 		}
 	}
 
+		
+	//FIXME fix doc
+	/**
+	 * Just like the {@link https://firebase.google.com/docs/reference/js/database.md#query | query} function in the firebaseDB,
+	 *  but the first parameter is options for relations then is spread parameter like {@link https://firebase.google.com/docs/reference/js/database.md#query | query}
+	 *
+	 * Just like {@link FrostDelegate.observeMany} but with promises instead of observables.
+	 *
+	 * @see {@link FrostDelegate.observeMany}
+	 * @see {@link Include}.
+	 * @see {@link https://firebase.google.com/docs/reference/js/database.queryconstraint | QueryConstraint}.
+	 *
+	 * @param options - options for the query
+	 * @param {Include} options.include - see {@link Include}.
+	 * @param {QueryConstraint[]} queryConstraints - see {@link https://firebase.google.com/docs/reference/js/database.queryconstraint | QueryConstraint}.
+	 * @returns the query results with related objects that were given in the include parameter
+	 */
+	 observeMultiple<I extends T["IncludeOptions"],K extends string[]>(keys:K,options?: { include?: I, listenToNestedChanges:ListenToNestedChanges } | null): Observable<Record<ArrayValuesType<K>,FetchReturnType<T,I>>> {
+		try {
+			let promiseMap: Record<ArrayValuesType<K>,Observable<FetchReturnType<T,I>>> = {} as any
+			keys.forEach(
+				(key:ArrayValuesType<K>)=>promiseMap[key] = this.observeOne<I>(key,options?.include,options.listenToNestedChanges)
+			)
+			return combineLatest(promiseMap)
+			
+		} catch (error) {
+			console.log(error);
+			throw error;
+		}
+	}
 	/**
 	 * Returns the object with the related instances with it (depending on the include parameter)
 	 * Use this if you have an object instance without the related instances you want.
@@ -388,7 +453,7 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @param {ListenToNestedChanges} listenToNestedChanges - see {@link ListenToNestedChanges}.
 	 * @returns an Observable of the object instance with related objects that were given in the include parameter
 	 */
-	getRelatedObservable<I extends T["IncludeOptions"],R = FetchReturnType<T,I>>(
+	getRelatedObservable<I extends T["IncludeOptions"]>(
 		object: T["Model"] & T["FrostMetadata"],
 		include?: T["IncludeOptions"],
 		listenToNestedChanges?: ListenToNestedChanges
@@ -533,7 +598,8 @@ export abstract class FrostDelegate<T extends Types = Types> {
 		connect?: T["ConnectOptions"],
 		disconnect?: T["DisconnectOptions"]
 	): Promise<{ map: any }> {
-		let data = JSON.parse(JSON.stringify(object));
+		// let data = JSON.parse(JSON.stringify(object));
+		let data = this.serialize(object);
 		if (!data.id) throw new Error("Can't add child to node: " + this.collectionPath);
 
 		const updates: any = {};
@@ -758,14 +824,47 @@ export abstract class FrostDelegate<T extends Types = Types> {
 		return getConnectedKeysByRelation(this.model,relation,object)
 	}
 
-	private serialize(object:T["FullModel"]): any {
-		throw new Error("Not Implemented");
-		
+	private serialize(object:T["FullModel"]): T["Model"] {
+		let output: any = {}
+		this.model.properties.forEach(({name,type,isArray,optional,defaultValue})=>{
+			let value = object[name]
+			if(isNullOrUndefined(value)){
+				if(optional) output[name] = value ?? defaultValue;
+				else throw new Error(`Property (${name}) in Model (${this.model.name}) cannot be null or undefined`);
+			}
+			else{
+				if(isArray && !Array.isArray(value)){
+					throw new Error(`Property (${name}) in Model (${this.model.name}) should be an array, instead given value was (${value})`);
+				}
+				output[name] = value;
+
+			}
+		})
+		return output as T["Model"]
 	}
 	private deserialize<I extends T["IncludeOptions"] = T["IncludeOptions"]>(data:any): FetchReturnType<T,I> {
-		throw new Error("Not Implemented");
+		let output: any = {...data}
+		this.model.properties.forEach(({name,type,isArray,optional})=>{
+			let value = data[name]
+			if(isNullOrUndefined(value)){
+				if(optional) output[name] = value;
+				else throw new Error(`Property (${name}) in Model (${this.model.name}) cannot be null or undefined. Received \`${value}\` from database`);
+			}
+			else{
+				if(isArray && !Array.isArray(value)){
+					throw new Error(`Property (${name}) in Model (${this.model.name}) should be an array, instead given value was (${value})`);
+				}
+				switch (type) {
+					case 'Date':
+					case 'date':
+						value = new Date(value)
+						break;
+				}
+				output[name] = value;
 
-		return data
+			}
+		})
+		return output
 	}
 }
 
