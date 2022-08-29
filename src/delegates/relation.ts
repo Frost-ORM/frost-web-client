@@ -89,7 +89,7 @@ export class Relation {
 			join(
 				DATA_REFERENCE,
 				this.relationType,
-				this.fields[this.sideIds[idx]] + (this.relationType === RelationTypes.MANY_TO_MANY ? "" : "ID")
+				this.fields[this.sideIds[idx]] //+ (this.relationType === RelationTypes.MANY_TO_MANY ? "" : "ID")
 			)
 		);
 	}

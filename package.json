@@ -78,6 +78,7 @@
   "devDependencies": {
     "@memlab/memlab-typedoc-plugin-markdown": "^3.13.22",
     "@types/firebase": "^3.2.1",
+    "@types/lodash": "^4.14.184",
     "@zamiell/typedoc-plugin-markdown": "^3.13.4",
     "igniteui-typedoc-theme": "^3.1.0",
     "typedoc": "^0.23.10",

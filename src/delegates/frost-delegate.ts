@@ -1,6 +1,7 @@
 import {
 	child,
 	Database,
+	DataSnapshot,
 	equalTo,
 	get,
 	ListenOptions,
@@ -21,6 +22,7 @@ import {
 	map,
 	Observable,
 	of,
+	Subject,
 	switchMap,
 	throwError,
 } from "rxjs";
@@ -33,11 +35,11 @@ import { slashToDotJoin } from "../helpers/slashToDotJoin";
 import { trueOrNull } from "../helpers/trueOrNull";
 import { valueOrNull } from "../helpers/valueOrNull";
 import { FetchReturnType, Model, Types, With } from "../global-types";
-import { ALL_RELATIONS, Relation, RelationTypes, } from "./relation";
+import { ALL_RELATIONS, Relation, RelationTypes } from "./relation";
 import { ArrayValuesType } from "../types-helpers/array";
 
+//TODO Improve listening to changes in many-to-many
 export abstract class FrostDelegate<T extends Types = Types> {
-	
 	/**
 	 *
 	 * @internal
@@ -48,24 +50,26 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @internal
 	 */
 
-	 public collectionPath:string
-	 protected entityName:string
-	 protected relations:Record<PropertyKey,Relation>
-
+	public collectionPath: string;
+	protected entityName: string;
+	protected relations: Record<PropertyKey, Relation>;
+	protected _refreshMetadata:boolean = false
 	constructor(
 		/**
 		 *
 		 * @internal
 		 */
 
-		protected model:Model,
-		) {
+		protected model: Model
+	) {
 		if (Frost.initialized) {
 			this.db = Frost.firebaseDB;
 
-			this.collectionPath = model.path
-			this.entityName = model.name
-			this.relations = Relation.fromModel(model,'map')
+			this.collectionPath = model.path;
+			this.entityName = model.name;
+			this.relations = Relation.fromModel(model, "map");
+
+			//TODO If there are at least one many-to-many relation refreshMetadata = true
 		} else {
 			throw new Error("Frost is not initialized");
 		}
@@ -78,28 +82,11 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	getAllRelations = (options?: { type?: RelationTypes[]; keys?: string[] }): Relation[] => {
 		let type = options?.type || ALL_RELATIONS;
 		let keys = options?.keys;
-		return Object.values(this.relations)
-			.filter(
-				(relation: Relation) =>
-					type.includes(relation.relationType) &&
-					(!keys || keys.includes(relation.fields[0]) || keys.includes(relation.fields[1]))
-			);
-	};
-
-	/**
-	 *
-	 * @internal
-	 */
-	getPropsWithRelation = (options?: { type?: RelationTypes[]; keys?: string[] }): Relation[] => {
-		let type = options?.type || ALL_RELATIONS;
-		let keys = options?.keys;
-
-		return Object.values(this.relations)
-			.filter((relation) => relation.isLocal(this.entityName))
-			.filter(
-				(relation: Relation) =>
-					type.includes(relation.relationType) && (!keys || keys.includes(relation.fields[0]))
-			);
+		return Object.values(this.relations).filter(
+			(relation: Relation) =>
+				type.includes(relation.relationType) &&
+				(!keys || keys.includes(relation.fields[0]) || keys.includes(relation.fields[1]))
+		);
 	};
 
 	/**
@@ -133,10 +120,14 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	/**
 	 * @internal
 	 */
-	private getIncludeArray(include?:T["IncludeOptions"]):string[]{
-		return include? Object.entries(include).filter(([_,value])=>value).map(([key,])=>key): undefined;
+	private getIncludeArray(include?: T["IncludeOptions"]): string[] {
+		return include
+			? Object.entries(include)
+					.filter(([_, value]) => value)
+					.map(([key]) => key)
+			: undefined;
 	}
-	
+
 	/**
 	 * Just like the {@link https://firebase.google.com/docs/reference/js/database.md#query | query} function in the firebaseDB,
 	 *  but the first parameter is options for relations then is spread parameter like {@link https://firebase.google.com/docs/reference/js/database.md#query | query}
@@ -152,18 +143,21 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @param {QueryConstraint[]} queryConstraints - see {@link https://firebase.google.com/docs/reference/js/database.queryconstraint | QueryConstraint}.
 	 * @returns the query results with related objects that were given in the include parameter
 	 */
-	async findMany<I extends T["IncludeOptions"]>(options: { include?: I } | null, ...queryConstraints: QueryConstraint[]): Promise<FetchReturnType<T,I>[]> {
+	async findMany<I extends T["IncludeOptions"]>(
+		options: { include?: I } | null,
+		...queryConstraints: QueryConstraint[]
+	): Promise<FetchReturnType<T, I>[]> {
 		try {
 			const [snapshot, error] = await resolve(get(query(ref(this.db, this.collectionPath), ...queryConstraints)));
 			if (error && !snapshot) {
 				console.error(error);
 				throw error;
 			}
-			let output: FetchReturnType<T,I>[] = [];
+			let output: FetchReturnType<T, I>[] = [];
 			if (snapshot!.exists()) {
-				let values:any = snapshot!.val();
+				let values: any = snapshot!.val();
 				for (let value of Object.values(values)) {
-					output.push(await this.getRelated(value as any,options.include));
+					output.push(await this.getRelated(value as any, options.include));
 				}
 				return output;
 			}
@@ -173,8 +167,8 @@ export abstract class FrostDelegate<T extends Types = Types> {
 			console.log(error);
 			throw error;
 		}
-	}	
-	
+	}
+
 	//FIXME fix doc
 	/**
 	 * Just like the {@link https://firebase.google.com/docs/reference/js/database.md#query | query} function in the firebaseDB,
@@ -191,18 +185,14 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @param {QueryConstraint[]} queryConstraints - see {@link https://firebase.google.com/docs/reference/js/database.queryconstraint | QueryConstraint}.
 	 * @returns the query results with related objects that were given in the include parameter
 	 */
-	async findMultiple<I extends T["IncludeOptions"],K extends string[]>(keys:K,options?: { include?: I } | null): Promise<Record<ArrayValuesType<K>,FetchReturnType<T,I>>> {
+	async findMultiple<I extends T["IncludeOptions"], K extends string[]>(
+		keys: K,
+		options?: { include?: I } | null
+	): Promise<Record<ArrayValuesType<K>, FetchReturnType<T, I>>> {
 		try {
-			let promiseMap: Record<ArrayValuesType<K>,Observable<FetchReturnType<T,I>>> = {} as any
-			keys.forEach(
-				(key:ArrayValuesType<K>)=>promiseMap[key] = from(this.findOne<I>(key,options?.include))
-			)
-			return firstValueFrom(
-				combineLatest(
-					promiseMap
-				),
-			)
-	
+			let promiseMap: Record<ArrayValuesType<K>, Observable<FetchReturnType<T, I>>> = {} as any;
+			keys.forEach((key: ArrayValuesType<K>) => (promiseMap[key] = from(this.findOne<I>(key, options?.include))));
+			return firstValueFrom(combineLatest(promiseMap));
 		} catch (error) {
 			console.log(error);
 			throw error;
@@ -221,15 +211,18 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @param {Include} include - see {@link Include}.
 	 * @returns the object instance of the given id with related objects that were given in the include parameter
 	 */
-	async findOne<I extends T["IncludeOptions"]>(id: string, include?: T["IncludeOptions"]): Promise<FetchReturnType<T,I>> {
+	async findOne<I extends T["IncludeOptions"]>(
+		id: string,
+		include?: T["IncludeOptions"]
+	): Promise<FetchReturnType<T, I>> {
 		try {
 			let [snapshot, error] = await resolve(get(child(ref(this.db), join(this.collectionPath, id))));
 			if (error && !snapshot) {
 				console.error(error);
 				throw error;
 			}
-			if (snapshot!.exists()) {
-				let value = snapshot!.val();
+			if (snapshot.exists()) {
+				let value = snapshot.val();
 				return await this.getRelated(value, include);
 			}
 			throw new Error("No data available");
@@ -263,12 +256,11 @@ export abstract class FrostDelegate<T extends Types = Types> {
 			debounceDuration?: number;
 		} | null,
 		...queryConstraints: QueryConstraint[]
-	): Observable<FetchReturnType<T,I>[]> {
-		// TODO improve like listen
+	): Observable<FetchReturnType<T, I>[]> {
 		let listenToNestedChanges = isNotNullNorUndefined(options?.listenToNestedChanges)
 			? options.listenToNestedChanges
 			: false;
-			// console.log({listenToNestedChanges})
+		// console.log({listenToNestedChanges})
 		let debounceDuration = options?.debounceDuration ?? 500;
 		try {
 			return observable(query(ref(this.db, this.collectionPath), ...queryConstraints)).pipe(
@@ -276,7 +268,7 @@ export abstract class FrostDelegate<T extends Types = Types> {
 					// console.log(snapshot);
 					if (snapshot.exists()) {
 						return combineLatest(
-							Object.values(snapshot.val()).map((value:any) => {
+							Object.values(snapshot.val()).map((value: any) => {
 								return listenToNestedChanges
 									? this.getRelatedObservable(value, options?.include)
 									: from(this.getRelated(value, options?.include));
@@ -284,11 +276,92 @@ export abstract class FrostDelegate<T extends Types = Types> {
 						);
 					} else {
 						// return throwError(() => new Error("Snapshot Doesn't exits"));
-						console.error( new Error("Snapshot Doesn't exits"));
+						console.error(new Error("Snapshot Doesn't exits"));
 						return of([]);
 					}
 				}),
 				debounceTime(debounceDuration)
+			);
+		} catch (error) {
+			console.log(error);
+			throw error;
+		}
+	}
+
+	// FIXME Doc
+	/**
+	 * Just like the {@link https://firebase.google.com/docs/reference/js/database.md#query | query} function in the firebaseDB,
+	 * but with observables, also the first parameter is options for the observable then is spread parameter like {@link https://firebase.google.com/docs/reference/js/database.md#query | query}
+	 *
+	 * @see {@link Include}.
+	 * @see {@link ListenToNestedChanges}.
+	 * @see {@link https://firebase.google.com/docs/reference/js/database.queryconstraint | QueryConstraint}.
+	 *
+	 * @param options - options for the observable
+	 * @param {Include} options.include - see {@link Include}.
+	 * @param {ListenToNestedChanges} options.listenToNestedChanges - see {@link ListenToNestedChanges}.
+	 * @param {number} options.debounceDuration in Milliseconds. incase multiple changes happen to the query in short time, this will prevent the observable to emit too many times
+	 * @param {QueryConstraint[]} queryConstraints - see {@link https://firebase.google.com/docs/reference/js/database.queryconstraint | QueryConstraint}.
+	 * @defaultValue options.debounceDuration 500
+	 * @defaultValue options.listenToNestedChanges false
+	 * @returns an Observable of the query results with related objects that were given in the include parameter
+	 */
+	observeManyImproved<I extends T["IncludeOptions"]>(
+		options?: {
+			include?: I;
+			listenToNestedChanges?: ListenToNestedChanges;
+			debounceDuration?: number;
+		} | null,
+		...queryConstraints: QueryConstraint[]
+	): Observable<FetchReturnType<T, I>[]> {
+		let listenToNestedChanges = isNotNullNorUndefined(options?.listenToNestedChanges)
+			? options.listenToNestedChanges
+			: false;
+		// console.log({listenToNestedChanges})
+		let debounceDuration = options?.debounceDuration ?? 500;
+		try {
+			let subjectsMap: Record<string, Subject<any>> = {};
+
+			let observablesMap: Record<string, Observable<FetchReturnType<T, I>>> = {};
+			let observablesMapSubject: Subject<Record<string, Observable<FetchReturnType<T, I>>>> = new Subject();
+
+			// let outputSubject: Subject<FetchReturnType<T,I>[]>= new Subject()
+
+			observable(query(ref(this.db, this.collectionPath), ...queryConstraints))
+				.pipe(debounceTime(debounceDuration))
+				.subscribe((snapshot) => {
+					// console.log(snapshot);
+					if (snapshot.exists()) {
+						Object.entries(snapshot.val()).forEach(([key, value]: [string, any]) => {
+							if (!subjectsMap[key]) {
+								subjectsMap[key] = new Subject<any>();
+								observablesMap[key] = combineLatest({
+									object: subjectsMap[key].pipe(distinctUntilChanged((prev, curr) => _.isEqual(_.omit(prev.val() ?? {},"__frost__"), _.omit(curr.val() ?? {},"__frost__")))),
+									relations: subjectsMap[key].pipe(
+										distinctUntilChanged(this.metadataChanged<I>(options?.include)),
+										switchMap(() => {
+											return listenToNestedChanges
+												? this.getRelatedObservable(value, options?.include)
+												: from(this.getRelated(value, options?.include));
+										})
+									),
+								}).pipe(
+									map(({ object, relations }) => this.deserialize<I>({ ...relations, ...object }))
+								);
+							}
+							subjectsMap[key].next(value);
+						});
+						observablesMapSubject.next(observablesMap);
+					} else {
+						// return throwError(() => new Error("Snapshot Doesn't exits"));
+						console.error(new Error("Snapshot Doesn't exits"));
+						return of([]);
+					}
+				});
+			return observablesMapSubject.pipe(
+				switchMap((_observablesMap) => {
+					return combineLatest(Object.values(_observablesMap));
+				})
 			);
 		} catch (error) {
 			console.log(error);
@@ -308,12 +381,16 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @defaultValue listenToNestedChanges false
 	 * @returns an Observable of the object instance of the given id with related objects that were given in the include parameter
 	 */
-	observeOne<I extends T["IncludeOptions"]>(id: string, include?: T["IncludeOptions"], listenToNestedChanges: ListenToNestedChanges = false):Observable<FetchReturnType<T,I>> {
+	observeOne<I extends T["IncludeOptions"]>(
+		id: string,
+		include?: I,
+		listenToNestedChanges: ListenToNestedChanges = false
+	): Observable<FetchReturnType<T, I>> {
 		try {
-			// console.log("FrostApi::listen", this.entity, this.collectionPath);
+
 			let object = observable(child(ref(this.db), join(this.collectionPath, id)));
 			let relations = object.pipe(
-				distinctUntilChanged((prev, curr) => _.isEqual(prev.val()?.["__frost__"], curr.val()?.["__frost__"])), //TODO improve by including the include filter here also
+				distinctUntilChanged(this.metadataChanged<I>(include)),
 				switchMap((snapshot) => {
 					// console.log(snapshot);
 					if (snapshot.exists()) {
@@ -325,7 +402,7 @@ export abstract class FrostDelegate<T extends Types = Types> {
 					} else {
 						// return throwError(() => new Error("Snapshot Doesn't exits"));
 						console.error(new Error("Snapshot Doesn't exits"));
-						return of(null)
+						return of(null);
 					}
 				})
 			);
@@ -338,7 +415,6 @@ export abstract class FrostDelegate<T extends Types = Types> {
 		}
 	}
 
-		
 	//FIXME fix doc
 	/**
 	 * Just like the {@link https://firebase.google.com/docs/reference/js/database.md#query | query} function in the firebaseDB,
@@ -355,19 +431,24 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @param {QueryConstraint[]} queryConstraints - see {@link https://firebase.google.com/docs/reference/js/database.queryconstraint | QueryConstraint}.
 	 * @returns the query results with related objects that were given in the include parameter
 	 */
-	 observeMultiple<I extends T["IncludeOptions"],K extends string[]>(keys:K,options?: { include?: I, listenToNestedChanges:ListenToNestedChanges } | null): Observable<Record<ArrayValuesType<K>,FetchReturnType<T,I>>> {
+	observeMultiple<I extends T["IncludeOptions"], K extends string[]>(
+		keys: K,
+		options?: { include?: I; listenToNestedChanges: ListenToNestedChanges } | null
+	): Observable<Record<ArrayValuesType<K>, FetchReturnType<T, I>>> {
 		try {
-			let promiseMap: Record<ArrayValuesType<K>,Observable<FetchReturnType<T,I>>> = {} as any
+			let promiseMap: Record<ArrayValuesType<K>, Observable<FetchReturnType<T, I>>> = {} as any;
 			keys.forEach(
-				(key:ArrayValuesType<K>)=>promiseMap[key] = this.observeOne<I>(key,options?.include,options.listenToNestedChanges)
-			)
-			return combineLatest(promiseMap)
-			
+				(key: ArrayValuesType<K>) =>
+					(promiseMap[key] = this.observeOne<I>(key, options?.include, options.listenToNestedChanges))
+			);
+			return combineLatest(promiseMap);
 		} catch (error) {
 			console.log(error);
 			throw error;
 		}
 	}
+
+	//TODO Add warning about refresh metadata
 	/**
 	 * Returns the object with the related instances with it (depending on the include parameter)
 	 * Use this if you have an object instance without the related instances you want.
@@ -381,13 +462,14 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @param {Include} include - see {@link Include}.
 	 * @returns an object instance with related objects that were given in the include parameter
 	 */
-
-
-	async getRelated<I extends T["IncludeOptions"]>(object: T["Model"] & T["FrostMetadata"], include?: T["IncludeOptions"]):  Promise<FetchReturnType<T,I>> {
-		let _include = this.getIncludeArray(include)
+	async getRelated<I extends T["IncludeOptions"]>(
+		object: T["Model"] & T["FrostMetadata"],
+		include?: T["IncludeOptions"]
+	): Promise<FetchReturnType<T, I>> {
+		let _include = this.getIncludeArray(include);
 
 		let relations = this.getAllRelations({ keys: _include ?? [] });
-		let value:any = object;
+		let value: any = object;
 		let id = object.id;
 		for (let _rel of relations) {
 			let rel = _rel.withSide(this.entityName);
@@ -441,6 +523,7 @@ export abstract class FrostDelegate<T extends Types = Types> {
 		return this.deserialize<I>(value);
 	}
 
+	//TODO Add warning about refresh metadata
 	/**
 	 * Returns an observable of the object with the related instances with it (depending on the include parameter)
 	 * Use this if you have an object instance without the related instances you want.
@@ -457,11 +540,11 @@ export abstract class FrostDelegate<T extends Types = Types> {
 		object: T["Model"] & T["FrostMetadata"],
 		include?: T["IncludeOptions"],
 		listenToNestedChanges?: ListenToNestedChanges
-	): Observable<FetchReturnType<T,I>> {
-		let _include = this.getIncludeArray(include)
+	): Observable<FetchReturnType<T, I>> {
+		let _include = this.getIncludeArray(include);
 
 		let relations = this.getAllRelations({ keys: _include ?? [] });
-		let value:any = object;
+		let value: any = object;
 		let id = object.id;
 		let observables: Record<string, Observable<any>> = {};
 		for (let _rel of relations) {
@@ -525,7 +608,9 @@ export abstract class FrostDelegate<T extends Types = Types> {
 		}
 		// console.log({ value });
 		return Object.keys(observables).length
-			? combineLatest(observables).pipe<FetchReturnType<T,I>>(map((values) => this.deserialize<I>({ ...value, ...values })))
+			? combineLatest(observables).pipe<FetchReturnType<T, I>>(
+					map((values) => this.deserialize<I>({ ...value, ...values }))
+			  )
 			: of(this.deserialize<I>({ ...value }));
 	}
 
@@ -598,6 +683,32 @@ export abstract class FrostDelegate<T extends Types = Types> {
 		connect?: T["ConnectOptions"],
 		disconnect?: T["DisconnectOptions"]
 	): Promise<{ map: any }> {
+		return this._getUpdateMap(object,connect,disconnect)
+	}
+	/**
+	 * Returns a map containing the updates that could be passed to firebaseDB update function
+	 * :::caution
+	 * ***Warning:*** Changes to nested instances won't be applied
+	 * :::
+	 *
+	 * @see {@link ConnectOptions}.
+	 * @see {@link DisconnectOptions}
+	 *
+	 * @param object - The object instance containing the new changes
+	 * @param {ConnectOptions} connect - see {@link ConnectOptions}.
+	 * @param disconnect - see {@link DisconnectOptions}.
+	 * @returns an object containing the update map
+	 */
+	protected async _getUpdateMap(
+		object: T["FullModel"],
+		connect?: T["ConnectOptions"],
+		disconnect?: T["DisconnectOptions"],
+		refreshMetadata:boolean = this._refreshMetadata
+	): Promise<{ map: any }> {
+		//TODO refresh metadata
+		if(refreshMetadata){
+			object = await this.renewMetadata(object) ?? object
+		}
 		// let data = JSON.parse(JSON.stringify(object));
 		let data = this.serialize(object);
 		if (!data.id) throw new Error("Can't add child to node: " + this.collectionPath);
@@ -605,9 +716,12 @@ export abstract class FrostDelegate<T extends Types = Types> {
 		const updates: any = {};
 
 		let _disconnect: Record<string, "all" | true | string | string[]> | undefined = undefined;
-		if ((typeof disconnect === "string" && disconnect === 'all') || (typeof disconnect === "boolean" && disconnect === true)) {
+		if (
+			(typeof disconnect === "string" && disconnect === "all") ||
+			(typeof disconnect === "boolean" && disconnect === true)
+		) {
 			_disconnect = object.getAllConnectedKeys();
-		} else if(disconnect) {
+		} else if (disconnect) {
 			_disconnect = mapClear(disconnect);
 		}
 		if (connect || _disconnect) {
@@ -783,8 +897,8 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @returns an object containing the update map
 	 */
 	async getDeleteMap(object: T["FullModel"], disconnect?: T["DisconnectOptions"]): Promise<{ map: any }> {
-		let map = (await this.getUpdateMap(object, undefined, disconnect ?? "all")).map;
-		map[join(this.collectionPath, object.id!)] = null;
+		let map = (await this._getUpdateMap(object, undefined, disconnect ?? "all",true)).map;
+		map[join(this.collectionPath, object.id)] = null;
 		return { map };
 	}
 
@@ -805,70 +919,110 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	}
 
 	/**
- * 
- * @param propertyName - the name of the property with the relation which keys' you require.
- * @param object - the object instance that you want to get the keys from
- * @returns an array containing the ids of the instances that are connected. if there are no connected keys or the property name is incorrect then there'll be no key-value pair for the specific property
- */
-	getConnectedKeys(propertyName: string, object: T["FullModel"]): string[] | null{
-		return getConnectedKeys(this.model,Object.values(this.relations),propertyName,object)
+	 *
+	 * @param propertyName - the name of the property with the relation which keys' you require.
+	 * @param object - the object instance that you want to get the keys from
+	 * @returns an array containing the ids of the instances that are connected. if there are no connected keys or the property name is incorrect then there'll be no key-value pair for the specific property
+	 */
+	getConnectedKeys(propertyName: string, object: T["FullModel"]): string[] | null {
+		return getConnectedKeys(this.model, Object.values(this.relations), propertyName, object);
 	}
 
 	/**
 	 * For local fields
-	 * @param relation 
-	 * @param object 
-	 * @returns 
+	 * @param relation
+	 * @param object
+	 * @returns
 	 */
-	private getConnectedKeysByRelation(relation:Relation, object: any): string[] | null {
-		return getConnectedKeysByRelation(this.model,relation,object)
+	private getConnectedKeysByRelation(relation: Relation, object: any): string[] | null {
+		return getConnectedKeysByRelation(this.model, relation, object);
 	}
 
-	private serialize(object:T["FullModel"]): T["Model"] {
-		let output: any = {}
-		this.model.properties.forEach(({name,type,isArray,optional,defaultValue})=>{
-			let value = object[name]
-			if(isNullOrUndefined(value)){
-				if(optional) output[name] = value ?? defaultValue;
+	private serialize(object: T["FullModel"]): T["Model"] {
+		let output: any = {};
+		this.model.properties.forEach(({ name, type, isArray, optional, defaultValue }) => {
+			let value = object[name];
+			if (isNullOrUndefined(value)) {
+				if (optional) output[name] = value ?? defaultValue;
 				else throw new Error(`Property (${name}) in Model (${this.model.name}) cannot be null or undefined`);
-			}
-			else{
-				if(isArray && !Array.isArray(value)){
-					throw new Error(`Property (${name}) in Model (${this.model.name}) should be an array, instead given value was (${value})`);
+			} else {
+				if (isArray && !Array.isArray(value)) {
+					throw new Error(
+						`Property (${name}) in Model (${this.model.name}) should be an array, instead given value was (${value})`
+					);
 				}
 				output[name] = value;
-
 			}
-		})
-		return output as T["Model"]
+		});
+		return output as T["Model"];
 	}
-	private deserialize<I extends T["IncludeOptions"] = T["IncludeOptions"]>(data:any): FetchReturnType<T,I> {
-		let output: any = {...data}
-		this.model.properties.forEach(({name,type,isArray,optional})=>{
-			let value = data[name]
-			if(isNullOrUndefined(value)){
-				if(optional) output[name] = value;
-				else throw new Error(`Property (${name}) in Model (${this.model.name}) cannot be null or undefined. Received \`${value}\` from database`);
-			}
-			else{
-				if(isArray && !Array.isArray(value)){
-					throw new Error(`Property (${name}) in Model (${this.model.name}) should be an array, instead given value was (${value})`);
+	private deserialize<I extends T["IncludeOptions"] = T["IncludeOptions"]>(data: any): FetchReturnType<T, I> {
+		let output: any = { ...data };
+		this.model.properties.forEach(({ name, type, isArray, optional }) => {
+			let value = data[name];
+			if (isNullOrUndefined(value)) {
+				if (optional) output[name] = value;
+				else
+					throw new Error(
+						`Property (${name}) in Model (${this.model.name}) cannot be null or undefined. Received \`${value}\` from database`
+					);
+			} else {
+				if (isArray && !Array.isArray(value)) {
+					throw new Error(
+						`Property (${name}) in Model (${this.model.name}) should be an array, instead given value was (${value})`
+					);
 				}
 				switch (type) {
-					case 'Date':
-					case 'date':
-						value = new Date(value)
+					case "Date":
+					case "date":
+						value = new Date(value);
 						break;
 				}
 				output[name] = value;
-
 			}
-		})
-		return output
+		});
+		return output;
+	}
+
+	protected metadataFilterInclude<I extends T["IncludeOptions"] = T["IncludeOptions"]>(include: I | undefined,value:T['FullModel']): I {
+		if((Object.keys(include ?? {})).length === 0) return {} as any
+		return _.mapValues(value.__frost__,(_value)=>_.pick(_value,Object.keys(include))) as any
+	}
+	protected metadataChanged<I extends T["IncludeOptions"] = T["IncludeOptions"]>(include: I,defaultIncaseIncludeEmpty = false): (previous: DataSnapshot, current: DataSnapshot) => boolean {
+		return (prev, curr) => {
+			if((Object.keys(include ?? {})).length === 0) return defaultIncaseIncludeEmpty
+			return _.isEqual(
+				_.mapValues(this.metadataFilterInclude(include,{...(prev.val() ?? {})})),
+				_.mapValues(this.metadataFilterInclude(include,{...(curr.val() ?? {})})),
+			)
+		}
+	}
+
+	protected async getMetadata(id,fallback = {}):Promise<T["FrostMetadata"]>{
+		let [snapshot, error] = await resolve(get(child(ref(this.db), join(this.collectionPath, id,'__frost__'))));
+		if (error && !snapshot) {
+			console.error(error);
+			throw error;
+		}
+		
+		return snapshot.val() ?? fallback
+		
+	}
+	protected async renewMetadata(object:T["Model"]):Promise<T["Model"]>{
+		if(!object?.id) throw new Error(this.model.name+":: Renew metadata: Missing Node ID");
+		
+		let [data, error] = await resolve(this.getMetadata(object.id))
+		if (error) {
+			console.error(error);
+			throw error;
+		}
+		if(data){
+			return _.set(object,'__frost__',data)
+		}
+
+		
 	}
 }
-
-
 
 /**
  * This helps you determine which relation you want to listen to changes from.
@@ -881,13 +1035,13 @@ export type ListenToNestedChanges = boolean | Record<RelationTypes, boolean>;
 
 //FIXME Doc
 /**
- * 
+ *
  * @param propertyName - the name of the property with the relation which keys' you require.
  * @param object - the object instance that you want to get the keys from
  * @returns an array containing the ids of the instances that are connected. if there are no connected keys or the property name is incorrect then there'll be no key-value pair for the specific property
  */
-function getConnectedKeys(model:Model,relations:Relation[],propertyName: string, object: any): string[] | null {
-	let relation = relations.find((rel)=>rel.fields.includes(propertyName))
+function getConnectedKeys(model: Model, relations: Relation[], propertyName: string, object: any): string[] | null {
+	let relation = relations.find((rel) => rel.fields.includes(propertyName));
 
 	if (relation) {
 		relation = relation.withSide(model.name);
@@ -907,12 +1061,12 @@ function getConnectedKeys(model:Model,relations:Relation[],propertyName: string,
 }
 //FIXME Doc
 /**
- * 
+ *
  * @param propertyName - the name of the property with the relation which keys' you require.
  * @param object - the object instance that you want to get the keys from
  * @returns an array containing the ids of the instances that are connected. if there are no connected keys or the property name is incorrect then there'll be no key-value pair for the specific property
  */
-function getConnectedKeysByRelation(model:Model,relation:Relation, object: any): string[] | null {
+function getConnectedKeysByRelation(model: Model, relation: Relation, object: any): string[] | null {
 	if (relation) {
 		relation = relation.withSide(model.name);
 		let keys = _.get(object, slashToDotJoin(relation.localReference));
@@ -929,3 +1083,5 @@ function getConnectedKeysByRelation(model:Model,relation:Relation, object: any):
 	}
 	return null;
 }
+
+
