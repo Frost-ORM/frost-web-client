@@ -1,9 +1,8 @@
-import "reflect-metadata";
 import { DATA_REFERENCE, SYMBOL_PREFIX } from "../helpers/consts";
 import { join } from "../helpers/join";
-import { Model,Relation as TranspilerRelation } from "../global-types";
+import { Model,TranspilerRelation as TranspilerRelation } from "../global-types";
 
-
+// TODO fix local and foreign field changes due to isMaster
 
 export enum RelationTypes {
 	ONE_TO_ONE = "one_to_one",
@@ -30,6 +29,7 @@ export type Prop = {
 
 type ModelWithoutRelations = Omit<Model,'relations'>
 type TranspilerRelationWithModels = TranspilerRelation & {localModel:ModelWithoutRelations,foreignModel:ModelWithoutRelations,}
+export type ModelWithEnhancedRelations  = Model & {relations:TranspilerRelationWithModels[]}
 export class Relation {
 	public relationType: RelationTypes;
 	public sides: ModelWithoutRelations[] = [];
@@ -37,7 +37,7 @@ export class Relation {
 	private _references: string[] = [];
 	public name:string;
 	sideIds: (0 | 1)[] = [0, 1];
-
+	protected _isMaster: boolean = true
 	constructor(
 		options?: {
 			relationType?: RelationTypes;
@@ -45,6 +45,7 @@ export class Relation {
 			fields?: string[];
 			references?: string[];
 			name?: string;
+			isMaster?:Boolean
 		},
 		private reverse?: boolean
 	) {
@@ -53,6 +54,7 @@ export class Relation {
 		this.sides = options?.sides ?? [];
 		this.fields = options?.fields ?? [];
 		this._references = options?.references ?? [];
+		this._isMaster = Boolean(options?.isMaster);
 		if (this.reverse) this.sideIds = [1, 0];
 	}
 
@@ -61,9 +63,11 @@ export class Relation {
 			name,
 			relationType: relationType as RelationTypes,
 			fields:[localField.name,foreignField.name],
-			sides:[localModel,foreignModel]
+			sides:[localModel,foreignModel],
+			isMaster:Boolean(localField.isArray)
 			//todo add missing
 		})
+		
 	}
 	static fromModel<B extends string = 'map' |'array'>(model:Model,returnType?:B): B extends 'array'? Relation[]:Record<string,Relation>{
 		//@ts-ignore
@@ -111,6 +115,18 @@ export class Relation {
 		return this.getField(1);
 	}
 
+	getSide(idx: number) {
+		if (idx !== 0 && idx !== 1) throw new Error(" index can't be anything other than 0 or 1");
+
+		return this.sides[this.sideIds[idx]];
+	}
+	get localSide() {
+		return this.getSide(0);
+	}
+	get foreignSide() {
+		return this.getSide(1);
+	}
+
 	getCollectionPath(idx: number) {
 		if (idx !== 0 && idx !== 1) throw new Error("reference index can't be anything other than 0 or 1");
 		if (!this.sides || !this.sides[0] || !this.sides[1]) throw new Error("Error in defining relationship ");
@@ -128,20 +144,20 @@ export class Relation {
 	}
 
 	isLocal(entity: string|Model) {
+		const idx = this.sideIds[0]; //Added
 		if (typeof entity  === 'string') {
-			return this.sides?.[0].name === entity;
-			
+			return this.sides?.[idx].name === entity;
 		}else{
-			return this.sides?.[0].name === entity.name;
-
+			return this.sides?.[idx].name === entity.name;
 		}
 	}
 	isForeign(entity: string|Model) {
+		const idx = this.sideIds[1]; //Added
 		if (typeof entity  === 'string') {
-			return this.sides?.[1].name === entity;
+			return this.sides?.[idx].name === entity;
 			
 		}else{
-			return this.sides?.[1].name === entity.name;
+			return this.sides?.[idx].name === entity.name;
 
 		}
 	}
@@ -150,14 +166,15 @@ export class Relation {
 		return !this.isSlave;
 	}
 	get isSlave() {
-		return Boolean(this.reverse);
+		// return Boolean(this.reverse);
+		return (this.reverse)? this._isMaster : !this._isMaster
 	}
 	withSide(side: string|Model) {
 		// console.log({ side, sides: this.sides });
 		if (this.isLocal(side)) {
 			return this;
 		} else if (this.isForeign(side)) {
-			return new Relation({ ...this, references: this.getReferences() }, true);
+			return new Relation({ ...this, references: this._references,isMaster:this._isMaster}, !this.reverse); //Added
 		} else {
 			throw new Error("Doesn't belong to either side");
 		}

@@ -28,10 +28,10 @@ export class Frost {
 		Frost.firebaseApp = initializeApp(firebaseConfig);
 		Frost.firebaseDB = getDatabase(Frost.firebaseApp);
 		Frost._initialized = true;
-		let tmp: any = { firebaseApp: Frost.firebaseApp };
+		let tmp: any = { firebaseApp: Frost.firebaseApp,firebaseDB: Frost.firebaseDB };
 
 		for (const key in delegates) {
-			tmp[key] = new (delegates[key])();
+			tmp[key] = new (delegates[key])(Frost.firebaseDB);
 		}
 		return { ...tmp } as FrostAppImpl<DelegatesMap>;
 	}
@@ -45,6 +45,7 @@ export class Frost {
 	 * @returns a JSON String for the indices to be added to the Firebase Realtime Database
 	 *
 	 */
+	//FIXME Fix getIndices
 	static getIndices() {
 		if (!this.initialized) throw new Error("Frost App is not initialized");
 
@@ -67,5 +68,8 @@ export class Frost {
 /**
  * @internal
  */
-export type FrostAppImpl<T extends { [key: string]: ClassOf<FrostDelegate> }> = { -readonly [Property in keyof T]: InstanceType<T[Property]> } & { readonly firebaseApp: FirebaseApp };
+export type FrostAppImpl<T extends { [key: string]: ClassOf<FrostDelegate> }> = { -readonly [Property in keyof T]: InstanceType<T[Property]> } & {
+	 readonly firebaseApp: FirebaseApp 
+	 readonly firebaseDB: Database
+	};
 

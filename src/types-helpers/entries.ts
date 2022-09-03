@@ -11,3 +11,5 @@ export type EntityFunctionEntries<T> = EntriesWithType<T, Function>
 export type KeysOfEntries<T> = T extends [infer U, any] ? U : never;
 
 export type KeysOfEntriesWithType<E,T> = EntriesWithType<E,T> extends [infer U, any] ? U extends string|number|symbol? U : never : never;
+
+export type KeysOf<T> = T extends Partial<Record<infer U, any>> ? U : never;

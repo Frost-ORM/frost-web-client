@@ -14,6 +14,7 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "generated": "./dist/generated/index.js",
       "global-types": "./dist/global-types.js",
       "delegates": "./dist/delegates/index.js",
       "helpers": "./dist/helpers/index.js",
@@ -26,6 +27,9 @@
     "*": {
       "global-types": [
         "dist/global-types.d.ts"
+      ],
+      "generated": [
+        "dist/generated/index.d.ts"
       ],
       "delegates": [
         "dist/delegates/index.d.ts"
@@ -47,7 +51,8 @@
     "build": "npx tsc",
     "prepublish": "npm run build",
     "prepack": "npm run build",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "postpack": "cp frost-orm-frost-web-client-*.tgz $NPM_REG/",
+    "test": "jest",
     "build:doc": "typedoc --options typedoc.json && rm -rf ./docs/intro.md ./docs/.nojekyll",
     "watch:doc": "typedoc --options typedoc.json --watch"
   },
@@ -78,9 +83,12 @@
   "devDependencies": {
     "@memlab/memlab-typedoc-plugin-markdown": "^3.13.22",
     "@types/firebase": "^3.2.1",
+    "@types/jest": "^29.0.0",
     "@types/lodash": "^4.14.184",
     "@zamiell/typedoc-plugin-markdown": "^3.13.4",
     "igniteui-typedoc-theme": "^3.1.0",
+    "jest": "^29.0.1",
+    "ts-jest": "^28.0.8",
     "typedoc": "^0.23.10",
     "typedoc-bitbucket-theme": "^1.0.0",
     "typedoc-plugin-markdown": "^3.13.4",

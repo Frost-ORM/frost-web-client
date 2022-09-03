@@ -64,9 +64,11 @@ export type RelationTypeWithSubTypes =
  * }
  * ```
  */
-export type ConnectOptions<T extends Partial<Record<RelationType, any>>> = Partial<
+export type ConnectOptions<T extends Partial<Record<RelationTypeWithSubTypes, any>>> = Partial<
 	Record<T["one_to_one"], string> &
-    Record<T["one_to_many" | "many_to_many"], string[]>
+    Record<T["many_to_many"], string[]> &
+    Record<T["one_to_many_master_fields"], string > &
+    Record<T["one_to_many_slave_fields"], string[] >
 >;
 
 /**
@@ -132,7 +134,7 @@ export type RelationField = {
 	name: string;
 	isArray?: boolean;
 };
-export type Relation = {
+export type TranspilerRelation = {
 	relationType: RelationType;
 	name: string;
 	localModelName: string;
@@ -152,7 +154,7 @@ export type Model = {
 	path: string;
 	name: string;
 	properties: Property[];
-	relations: Relation[];
+	relations: TranspilerRelation[];
 };
 
 export type FrostMetadata = {

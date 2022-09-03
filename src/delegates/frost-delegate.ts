@@ -14,9 +14,12 @@ import {
 } from "firebase/database";
 import * as _ from "lodash";
 import {
+	BehaviorSubject,
 	combineLatest,
+	combineLatestAll,
 	debounceTime,
 	distinctUntilChanged,
+	filter,
 	firstValueFrom,
 	from,
 	map,
@@ -24,9 +27,9 @@ import {
 	of,
 	Subject,
 	switchMap,
+	tap,
 	throwError,
 } from "rxjs";
-import { Frost } from "../frost";
 import { join } from "../helpers/join";
 import { isNotNullNorUndefined, isNullOrUndefined, mapClear } from "../helpers/nullOrUndefined";
 import { observable } from "../helpers/observable";
@@ -34,11 +37,15 @@ import { resolve } from "../helpers/resolve";
 import { slashToDotJoin } from "../helpers/slashToDotJoin";
 import { trueOrNull } from "../helpers/trueOrNull";
 import { valueOrNull } from "../helpers/valueOrNull";
-import { FetchReturnType, Model, Types, With } from "../global-types";
+import { FetchReturnType, FrostObject, Model, Types, With } from "../global-types";
 import { ALL_RELATIONS, Relation, RelationTypes } from "./relation";
 import { ArrayValuesType } from "../types-helpers/array";
+import { mapByKey } from "../helpers/array-methods";
+import { flatten } from "lodash";
+import { flattenObject } from "../helpers/object-methods";
 
 //TODO Improve listening to changes in many-to-many
+//TODO Check serializing and __frost__
 export abstract class FrostDelegate<T extends Types = Types> {
 	/**
 	 *
@@ -51,28 +58,26 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 */
 
 	public collectionPath: string;
-	protected entityName: string;
-	protected relations: Record<PropertyKey, Relation>;
-	protected _refreshMetadata:boolean = false
+	/* protected */ public entityName: string;
+	/* protected */ public relations: Record<PropertyKey, Relation>;
+	/* protected */ public _refreshMetadata:boolean = false
 	constructor(
 		/**
 		 *
 		 * @internal
 		 */
 
-		protected model: Model
+		/* protected */ public model: Model,firebaseDB
 	) {
-		if (Frost.initialized) {
-			this.db = Frost.firebaseDB;
+
+			this.db = firebaseDB;
 
 			this.collectionPath = model.path;
 			this.entityName = model.name;
 			this.relations = Relation.fromModel(model, "map");
 
 			//TODO If there are at least one many-to-many relation refreshMetadata = true
-		} else {
-			throw new Error("Frost is not initialized");
-		}
+
 	}
 
 	/**
@@ -313,56 +318,104 @@ export abstract class FrostDelegate<T extends Types = Types> {
 			debounceDuration?: number;
 		} | null,
 		...queryConstraints: QueryConstraint[]
-	): Observable<FetchReturnType<T, I>[]> {
+	): Observable<Record<string,FetchReturnType<T, I>>> {
 		let listenToNestedChanges = isNotNullNorUndefined(options?.listenToNestedChanges)
 			? options.listenToNestedChanges
 			: false;
 		// console.log({listenToNestedChanges})
 		let debounceDuration = options?.debounceDuration ?? 500;
 		try {
-			let subjectsMap: Record<string, Subject<any>> = {};
+			let subjectsMap: Record<string, BehaviorSubject<any>> = {};
 
 			let observablesMap: Record<string, Observable<FetchReturnType<T, I>>> = {};
-			let observablesMapSubject: Subject<Record<string, Observable<FetchReturnType<T, I>>>> = new Subject();
+			let observablesMapSubject: BehaviorSubject<Record<string, Observable<FetchReturnType<T, I>>>> = new BehaviorSubject({});
 
 			// let outputSubject: Subject<FetchReturnType<T,I>[]>= new Subject()
 
 			observable(query(ref(this.db, this.collectionPath), ...queryConstraints))
 				.pipe(debounceTime(debounceDuration))
 				.subscribe((snapshot) => {
-					// console.log(snapshot);
+
 					if (snapshot.exists()) {
-						Object.entries(snapshot.val()).forEach(([key, value]: [string, any]) => {
+						const snapshots = snapshot.val()
+						const snapshotEntries = Object.entries(snapshots)
+						// console.log({snapshots});
+						snapshotEntries.forEach(([key,]: [string, any]) => {
 							if (!subjectsMap[key]) {
-								subjectsMap[key] = new Subject<any>();
+								console.log(`created Subject["${key}"]`)
+								subjectsMap[key] = new BehaviorSubject<any>(undefined);
 								observablesMap[key] = combineLatest({
-									object: subjectsMap[key].pipe(distinctUntilChanged((prev, curr) => _.isEqual(_.omit(prev.val() ?? {},"__frost__"), _.omit(curr.val() ?? {},"__frost__")))),
-									relations: subjectsMap[key].pipe(
-										distinctUntilChanged(this.metadataChanged<I>(options?.include)),
-										switchMap(() => {
-											return listenToNestedChanges
-												? this.getRelatedObservable(value, options?.include)
-												: from(this.getRelated(value, options?.include));
+									object: subjectsMap[key].pipe(
+										// tap(val => console.log(`Main Subject :: before distinctUntilChanged :: `,val)),
+										distinctUntilChanged((prev, curr) =>  _.isEqual(_.omit(prev,"__frost__"), _.omit(curr,"__frost__"))),
+										// tap(val => console.log(`Main Subject :: After distinctUntilChanged :: `,val)),
+									),
+									relations: subjectsMap[key].pipe( //FIXME
+										// tap(val => console.log(`Relation Subject :: before distinctUntilChanged :: `,val)),
+										distinctUntilChanged((prev, curr) =>  {
+											let result = this.metadataChanged<I>(options?.include)(prev,curr)
+											console.log(new Date().getTime(),{result,prev,curr})
+											return result
+										}),
+										// tap(val => console.log(`Relation Subject :: After distinctUntilChanged :: `,val)),
+										switchMap(async(value) => {
+											if(value){
+												if(listenToNestedChanges){
+													return this.getRelatedObservable(value, options?.include);
+												}else{
+													const p = await this.getRelated(value, options?.include)
+													return of(p)
+												}
+											}else{
+												return of({})
+											}
+											
 										})
 									),
 								}).pipe(
-									map(({ object, relations }) => this.deserialize<I>({ ...relations, ...object }))
+									filter(({ object, relations })=>{
+										// console.log('filter',{ object, relations })
+										return Boolean(Object.keys(object ?? {}).length)
+									}),
+									map(({ object, relations }) => {
+										return this.deserialize<I>({ ...relations, ...object })
+										
+									}),
+									// tap(val => console.log(`Subject :: After map :: `,val)),
+
 								);
 							}
-							subjectsMap[key].next(value);
+							// subjectsMap[key].next(value);
 						});
-						observablesMapSubject.next(observablesMap);
+						subjectsMap = _.pick(subjectsMap,Object.keys(snapshots))
+						observablesMap = _.pick(observablesMap,Object.keys(snapshots))
+						
+						observablesMapSubject.next({...observablesMap});
+
+						snapshotEntries.forEach(([key, value]: [string, any]) => {
+							subjectsMap[key]?.next(value);
+						});
 					} else {
 						// return throwError(() => new Error("Snapshot Doesn't exits"));
 						console.error(new Error("Snapshot Doesn't exits"));
-						return of([]);
+						return observablesMapSubject.next({});
 					}
 				});
 			return observablesMapSubject.pipe(
+				distinctUntilChanged((prev, curr) => {
+					const result = _.xor(Object.keys(prev), Object.keys(curr))
+					console.log("difference",result,{prev,curr})
+					return result.length === 0
+				}),
 				switchMap((_observablesMap) => {
-					return combineLatest(Object.values(_observablesMap));
+							return combineLatest(_observablesMap);
 				})
-			);
+			)
+			// .pipe(
+			// 	switchMap((_observablesMap) => {
+			// 		return combineLatest(_observablesMap);
+			// 	})
+			// );
 		} catch (error) {
 			console.log(error);
 			throw error;
@@ -466,6 +519,7 @@ export abstract class FrostDelegate<T extends Types = Types> {
 		object: T["Model"] & T["FrostMetadata"],
 		include?: T["IncludeOptions"]
 	): Promise<FetchReturnType<T, I>> {
+		console.log(new Date().getTime(),this.model.name,"getRelated",object.id)
 		let _include = this.getIncludeArray(include);
 
 		let relations = this.getAllRelations({ keys: _include ?? [] });
@@ -628,7 +682,7 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @param {ConnectOptions} connect - see {@link ConnectOptions}.
 	 * @returns an object containing the update map and the new node id
 	 */
-	async add(object: T["FullModel"], connect?: T["ConnectOptions"]): Promise<{ id }> {
+	async add(object: T["Model"], connect?: T["ConnectOptions"]): Promise<{ id }> {
 		const { map: updates, id } = await this.getAddMap(object, connect);
 		await update(ref(this.db), updates);
 		return { id };
@@ -648,7 +702,7 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @param {ConnectOptions} connect - see {@link ConnectOptions}.
 	 * @returns an object containing the update map and the new node id
 	 */
-	async getAddMap(object: T["FullModel"], connect?: T["ConnectOptions"]): Promise<{ map: any; id: string }> {
+	async getAddMap(object: T["Model"], connect?: T["ConnectOptions"]): Promise<{ map: any; id: string }> {
 		let data = JSON.parse(JSON.stringify(object));
 
 		const newKey = data.id ?? push(child(ref(this.db), this.collectionPath)).key;
@@ -660,7 +714,7 @@ export abstract class FrostDelegate<T extends Types = Types> {
 		object.id = newKey;
 		return {
 			id: newKey,
-			map: (await this.getUpdateMap(object, connect)).map,
+			map: (await this._getUpdateMap(object, connect,undefined,undefined,false)).map,
 		};
 	}
 
@@ -679,11 +733,11 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @returns an object containing the update map
 	 */
 	async getUpdateMap(
-		object: T["FullModel"],
+		object: Partial<T["Model"]>,
 		connect?: T["ConnectOptions"],
 		disconnect?: T["DisconnectOptions"]
 	): Promise<{ map: any }> {
-		return this._getUpdateMap(object,connect,disconnect)
+		return this._getUpdateMap(object,connect,disconnect,undefined,true)
 	}
 	/**
 	 * Returns a map containing the updates that could be passed to firebaseDB update function
@@ -700,18 +754,19 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @returns an object containing the update map
 	 */
 	protected async _getUpdateMap(
-		object: T["FullModel"],
+		object: Partial<T["Model"]>,
 		connect?: T["ConnectOptions"],
 		disconnect?: T["DisconnectOptions"],
-		refreshMetadata:boolean = this._refreshMetadata
+		refreshMetadata:boolean = this._refreshMetadata,
+		partialSerialize:boolean=false
 	): Promise<{ map: any }> {
 		//TODO refresh metadata
 		if(refreshMetadata){
 			object = await this.renewMetadata(object) ?? object
 		}
 		// let data = JSON.parse(JSON.stringify(object));
-		let data = this.serialize(object);
-		if (!data.id) throw new Error("Can't add child to node: " + this.collectionPath);
+		let data = partialSerialize? this.partialSerialize(object): this.serialize(object);
+		if (!data.id) throw new Error("Missing ID on data object" + JSON.stringify(data));
 
 		const updates: any = {};
 
@@ -863,9 +918,15 @@ export abstract class FrostDelegate<T extends Types = Types> {
 				}
 			}
 		}
-		updates[join(this.collectionPath, data.id)] = data;
+		let metadata = data['__frost__']
+		delete data['__frost__']
+
+		data = {...flattenObject(data,'/',join(this.collectionPath,data.id)),...flattenObject(metadata ?? {},'/',join(this.collectionPath,data.id,'__frost__'),4),}
+
+		// updates[join(this.collectionPath, data.id)] = data;
+		
 		// console.log({ updates });
-		return { map: updates };
+		return { map: {...updates,...data} };
 	}
 
 	/**
@@ -881,7 +942,7 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @param {ConnectOptions} connect -  see {@link ConnectOptions}.
 	 * @param disconnect - see {@link DisconnectOptions}.
 	 */
-	async update(object: T, connect?: T["ConnectOptions"], disconnect?: T["DisconnectOptions"]): Promise<void> {
+	async update(object: Partial<T["Model"]> & Required<FrostObject>, connect?: T["ConnectOptions"], disconnect?: T["DisconnectOptions"]): Promise<void> {
 		const { map: updates } = await this.getUpdateMap(object, connect, disconnect);
 		await update(ref(this.db), updates);
 	}
@@ -896,7 +957,7 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @param disconnect - see {@link DisconnectOptions}
 	 * @returns an object containing the update map
 	 */
-	async getDeleteMap(object: T["FullModel"], disconnect?: T["DisconnectOptions"]): Promise<{ map: any }> {
+	async getDeleteMap(object: FrostObject, disconnect?: T["DisconnectOptions"]): Promise<{ map: any }> {
 		let map = (await this._getUpdateMap(object, undefined, disconnect ?? "all",true)).map;
 		map[join(this.collectionPath, object.id)] = null;
 		return { map };
@@ -913,7 +974,7 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @param disconnect - see {@link DisconnectOptions}.
 	 *
 	 */
-	async delete(object: T["FullModel"], disconnect?: T["DisconnectOptions"]): Promise<void> {
+	async delete(object: FrostObject, disconnect?: T["DisconnectOptions"]): Promise<void> {
 		const { map: updates } = await this.getDeleteMap(object, disconnect);
 		await update(ref(this.db), updates);
 	}
@@ -924,7 +985,7 @@ export abstract class FrostDelegate<T extends Types = Types> {
 	 * @param object - the object instance that you want to get the keys from
 	 * @returns an array containing the ids of the instances that are connected. if there are no connected keys or the property name is incorrect then there'll be no key-value pair for the specific property
 	 */
-	getConnectedKeys(propertyName: string, object: T["FullModel"]): string[] | null {
+	getConnectedKeys(propertyName: T["RelationsFieldsKeys"], object: T["FullModel"]): string[] | null {
 		return getConnectedKeys(this.model, Object.values(this.relations), propertyName, object);
 	}
 
@@ -940,7 +1001,7 @@ export abstract class FrostDelegate<T extends Types = Types> {
 
 	private serialize(object: T["FullModel"]): T["Model"] {
 		let output: any = {};
-		this.model.properties.forEach(({ name, type, isArray, optional, defaultValue }) => {
+		this.getBaseProperties().forEach(({ name, type, isArray, optional, defaultValue = null }) => {
 			let value = object[name];
 			if (isNullOrUndefined(value)) {
 				if (optional) output[name] = value ?? defaultValue;
@@ -954,22 +1015,51 @@ export abstract class FrostDelegate<T extends Types = Types> {
 				output[name] = value;
 			}
 		});
+		output.id = object.id
 		return output as T["Model"];
 	}
+	private partialSerialize(object: Partial<T["Model"]>): Partial<T["Model"]> {
+		let output: any = {};
+		const propMap = this.getBasePropertiesMap()
+		console.log({propMap})
+		Object.entries(object).forEach(([key,value]) => {
+			if(!propMap[key]) return;
+			let { name, type, isArray, optional, defaultValue = null } = propMap[key]
+			if (value === undefined) {
+				throw new Error(`Property ${name} cannot be undefined, if you want to unset the value then it should be set to \`null\``);
+			} else {
+				if (isArray && !Array.isArray(value) && value !== null) {
+					throw new Error(
+						`Property (${name}) in Model (${this.model.name}) should be an array, instead given value was (${value})`
+					);
+				}
+				output[name] = value;
+			}
+		});
+		output.id = object.id
+		return output;
+	}
+	private getBaseProperties() {
+		return this.model.properties.filter(({ name }) => this.model.relations.findIndex(({ localField, foreignField }) => (name === localField.name || name === foreignField.name)) === -1);
+	}
+	private getBasePropertiesMap() {
+		return mapByKey(this.getBaseProperties(),"name")
+	}
+
 	private deserialize<I extends T["IncludeOptions"] = T["IncludeOptions"]>(data: any): FetchReturnType<T, I> {
 		let output: any = { ...data };
-		this.model.properties.forEach(({ name, type, isArray, optional }) => {
+		this.model.properties.filter(({name})=>this.model.relations.findIndex(({localField,foreignField})=> (name === localField.name || name === foreignField.name)) === -1).forEach(({ name, type, isArray, optional }) => {
 			let value = data[name];
 			if (isNullOrUndefined(value)) {
 				if (optional) output[name] = value;
 				else
 					throw new Error(
-						`Property (${name}) in Model (${this.model.name}) cannot be null or undefined. Received \`${value}\` from database`
+						`Frost Deserializing Error: Property (${name}) in Model (${this.model.name}) cannot be null or undefined. Received \`${value}\` from database`
 					);
 			} else {
 				if (isArray && !Array.isArray(value)) {
 					throw new Error(
-						`Property (${name}) in Model (${this.model.name}) should be an array, instead given value was (${value})`
+						`Frost Deserializing Error: Property (${name}) in Model (${this.model.name}) should be an array, instead given value was (${value})`
 					);
 				}
 				switch (type) {
@@ -986,15 +1076,16 @@ export abstract class FrostDelegate<T extends Types = Types> {
 
 	protected metadataFilterInclude<I extends T["IncludeOptions"] = T["IncludeOptions"]>(include: I | undefined,value:T['FullModel']): I {
 		if((Object.keys(include ?? {})).length === 0) return {} as any
-		return _.mapValues(value.__frost__,(_value)=>_.pick(_value,Object.keys(include))) as any
+		return _.mapValues(value?.__frost__,(_value)=>_.pick(_value,Object.keys(include))) as any
 	}
-	protected metadataChanged<I extends T["IncludeOptions"] = T["IncludeOptions"]>(include: I,defaultIncaseIncludeEmpty = false): (previous: DataSnapshot, current: DataSnapshot) => boolean {
+	protected metadataChanged<I extends T["IncludeOptions"] = T["IncludeOptions"]>(include: I,defaultIncaseIncludeEmpty = false): (previous: any, current: any) => boolean {
 		return (prev, curr) => {
 			if((Object.keys(include ?? {})).length === 0) return defaultIncaseIncludeEmpty
 			return _.isEqual(
-				_.mapValues(this.metadataFilterInclude(include,{...(prev.val() ?? {})})),
-				_.mapValues(this.metadataFilterInclude(include,{...(curr.val() ?? {})})),
+				this.metadataFilterInclude(include,prev),
+				this.metadataFilterInclude(include,curr),
 			)
+			
 		}
 	}
 
