@@ -1,6 +1,6 @@
 import { DATA_REFERENCE, SYMBOL_PREFIX } from "../helpers/consts";
 import { join } from "../helpers/join";
-import { Model,TranspilerRelation as TranspilerRelation } from "../global-types";
+import { Model,ModelWithoutRelations,TranspilerRelation as TranspilerRelation, TranspilerRelationWithModels } from "../global-types";
 
 // TODO fix local and foreign field changes due to isMaster
 
@@ -27,9 +27,7 @@ export type Prop = {
 	};
 };
 
-type ModelWithoutRelations = Omit<Model,'relations'>
-type TranspilerRelationWithModels = TranspilerRelation & {localModel:ModelWithoutRelations,foreignModel:ModelWithoutRelations,}
-export type ModelWithEnhancedRelations  = Model & {relations:TranspilerRelationWithModels[]}
+
 export class Relation {
 	public relationType: RelationTypes;
 	public sides: ModelWithoutRelations[] = [];
@@ -39,12 +37,12 @@ export class Relation {
 	sideIds: (0 | 1)[] = [0, 1];
 	protected _isMaster: boolean = true
 	constructor(
-		options?: {
+		options: {
 			relationType?: RelationTypes;
 			sides?: ModelWithoutRelations[];
 			fields?: string[];
 			references?: string[];
-			name?: string;
+			name: string;
 			isMaster?:Boolean
 		},
 		private reverse?: boolean
@@ -174,10 +172,28 @@ export class Relation {
 		if (this.isLocal(side)) {
 			return this;
 		} else if (this.isForeign(side)) {
-			return new Relation({ ...this, references: this._references,isMaster:this._isMaster}, !this.reverse); //Added
+			return this.flipRelation(); //Added
 		} else {
 			throw new Error("Doesn't belong to either side");
 		}
+	}
+	enslaved(){
+		if (this.isSlave) {
+			return this;
+		} else {
+			return this.flipRelation();
+		}
+	}
+	emancipated(){
+		if (this.isMaster) {
+			return this;
+		} else {
+			return this.flipRelation();
+		}
+	}
+	flipRelation(){
+		
+		return new Relation({ ...this, references: this._references,isMaster:this._isMaster}, !this.reverse);
 	}
 	// static OneToOne(sides,fields){
 	//   return new Relations(RelationTypes.ONE_TO_ONE,sides,fields)

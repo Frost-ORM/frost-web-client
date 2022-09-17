@@ -22,7 +22,7 @@ test('flattenObject:depth', () => {
         },
         b:{
             a:{
-                a:1,
+                a:null,
                 b:2,
                 c:3
             }
@@ -49,7 +49,7 @@ test('flattenObject:depth', () => {
     expect(flattenedObject['/test/a/a']).toBe(1)
     expect(flattenedObject['/test/a/b']).toBe(2)
     expect(flattenedObject['/test/a/c']).toBe(3)
-    expect(flattenedObject['/test/b/a/b']).toBe(2)
+    expect(flattenedObject['/test/b/a/a']).toBe(null)
     expect(flattenedObject['/test/c/a/a/a/a']).toBe(1)
 
     flattenedObject = flattenObject(testObject,'/',undefined,5)

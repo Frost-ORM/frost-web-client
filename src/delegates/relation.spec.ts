@@ -1,5 +1,6 @@
-import { ModelWithEnhancedRelations, Relation } from "./relation";
+import {  Relation } from "./relation";
 import {describe, expect, test} from '@jest/globals';
+import { ModelWithEnhancedRelations } from "../global-types";
 
 const TestFrostModels: Record<string,ModelWithEnhancedRelations> = {
     "Student": {

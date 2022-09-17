@@ -5,12 +5,12 @@ import * as _ from "lodash";
 import { slashToDotJoin } from "./helpers/slashToDotJoin";
 import { Relation, RelationTypes } from "./delegates/relation";
 import { ClassOf } from "./types-helpers/constructor";
-import { DelegatesMap, getDelegatesMap } from "./generated";
+import { DelegatesMap, getDelegatesMap, getFrostRelations } from "./generated";
 
 export class Frost {
-	static firebaseApp: FirebaseApp;
-	static firebaseDB: Database;
-	static relations: Record<string,Relation>;
+	private static firebaseApp: FirebaseApp;
+	private static firebaseDB: Database;
+	private static relations: Record<string,Relation>;
 
 	private static _initialized: boolean = false;
 
@@ -45,18 +45,16 @@ export class Frost {
 	 * @returns a JSON String for the indices to be added to the Firebase Realtime Database
 	 *
 	 */
-	//FIXME Fix getIndices
 	static getIndices() {
 		if (!this.initialized) throw new Error("Frost App is not initialized");
-
+		let relations = _.mapValues(getFrostRelations(),(x)=>Relation.fromTranspilerRelation(x).emancipated())
 		let output: any = {};
-		Object.entries(this.relations).forEach(([name, relation]) => {
+		Object.entries(relations).forEach(([name, relation]) => {
 			switch (relation.relationType) {
 				case RelationTypes.ONE_TO_MANY:
-					let o = relation.foreignReference.split("/");
-					let final = o.pop();
-					let indexOn = _.get(output, slashToDotJoin(relation.foreignCollectionPath, ...o, "indexOn")) ?? [];
-					_.set(output, slashToDotJoin(relation.foreignCollectionPath, ...o, "indexOn"), [...indexOn, final]);
+					let indexOn = _.get(output, slashToDotJoin(relation.foreignCollectionPath,"indexOn")) ?? [];
+
+					_.set(output, slashToDotJoin(relation.foreignCollectionPath, "indexOn"), [...indexOn, relation.foreignReference]);
 
 					break;
 			}
@@ -66,7 +64,9 @@ export class Frost {
 	}
 }
 /**
- * @internal
+ * This the type of the FrostApp instance
+ * It contains the FirebaseApp instance and the default Firebase database instance
+ * It also contains all the instance of the FrostDelegate for each model after running the `npx frost generate` command
  */
 export type FrostAppImpl<T extends { [key: string]: ClassOf<FrostDelegate> }> = { -readonly [Property in keyof T]: InstanceType<T[Property]> } & {
 	 readonly firebaseApp: FirebaseApp 

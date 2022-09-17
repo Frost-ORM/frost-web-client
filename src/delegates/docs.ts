@@ -1,2 +1,2 @@
-export {RelationTypes,Relation} from "./relation"
-export {FrostDelegate as FrostApi,ListenToNestedChanges} from "./frost-delegate"
+export {RelationTypes} from "./relation"
+export {FrostDelegate,ListenToNestedChanges} from "./frost-delegate"
