@@ -340,7 +340,7 @@ export abstract class FrostDelegate<T extends ModelTypes = ModelTypes> {
 						// console.log({snapshots});
 						snapshotEntries.forEach(([key]: [string, any]) => {
 							if (!snapshotsSubjectsMap[key]) {
-								console.log(`created Subject["${key}"]`);
+								// console.log(`created Subject["${key}"]`);
 								snapshotsSubjectsMap[key] = new BehaviorSubject<any>(undefined);
 								snapshotsRelationsSubjectsMap[key] = new BehaviorSubject<any>(undefined);
 
@@ -349,12 +349,13 @@ export abstract class FrostDelegate<T extends ModelTypes = ModelTypes> {
 										// tap(val => console.log(`Relation Subject :: before distinctUntilChanged :: `,val)),
 										distinctUntilChanged((prev, curr) => {
 											let result = this.metadataChanged<I>(options?.include)(prev, curr);
-											console.log(new Date().getTime(), { result, prev, curr });
+											// console.log(new Date().getTime(), { result, prev, curr });
 											return result;
 										}),
 										// tap(val => console.log(`Relation Subject :: After distinctUntilChanged :: `,val)),
 										switchMap((value) => {
 											if (value) {
+												// TODO Determine what to do if one node is bad, right now it halts the updates
 												if (listenToNestedChanges) {
 													return this.getRelatedObservable(value, options?.include);
 												} else {
@@ -550,7 +551,7 @@ export abstract class FrostDelegate<T extends ModelTypes = ModelTypes> {
 		object: T["ModelWithMetadata"],
 		include?: T["IncludeOptions"]
 	): Promise<FetchReturnType<T, I>> {
-		console.log(new Date().getTime(), this.model.name, "getRelated", object.id);
+		// console.log(new Date().getTime(), this.model.name, "getRelated", object.id);
 		let _include = this.getIncludeArray(include);
 
 		let relations = this.getAllRelations({ keys: _include ?? [] });
@@ -1094,7 +1095,7 @@ export abstract class FrostDelegate<T extends ModelTypes = ModelTypes> {
 	private partialSerialize(object: Partial<T["Model"]>): Partial<T["Model"]> {
 		let output: any = {};
 		const propMap = this.getBasePropertiesMap();
-		console.log({ propMap });
+		// console.log({ propMap });
 		Object.entries(object).forEach(([key, value]) => {
 			if (!propMap[key]) return;
 			let { name, type, isArray, optional, defaultValue = null } = propMap[key];

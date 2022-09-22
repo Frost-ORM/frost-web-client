@@ -1,4 +1,4 @@
-This is the CLI for Frost
+This is the Web Client for Frost
 # What is [Frost](https://frost-orm.github.io/frost-web-docs/)?
 
 <img src="https://frost-orm.github.io/frost-web-docs/img/icon_small.png"/>
