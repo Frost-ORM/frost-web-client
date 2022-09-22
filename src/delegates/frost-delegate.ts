@@ -40,6 +40,7 @@ import { mapByKey } from "../helpers/array-methods";
 import { flatten } from "lodash";
 import { flattenObject } from "../helpers/object-methods";
 
+const DEFAULT_DEBOUNCE_DURATION = 500;
 //TODO Improve listening to changes in many-to-many
 //TODO Check serializing and __frost__
 export abstract class FrostDelegate<T extends ModelTypes = ModelTypes> {
@@ -262,7 +263,7 @@ export abstract class FrostDelegate<T extends ModelTypes = ModelTypes> {
 			? options?.listenToNestedChanges
 			: false;
 		// console.log({listenToNestedChanges})
-		let debounceDuration = options?.debounceDuration ?? 500;
+		let debounceDuration = options?.debounceDuration ?? DEFAULT_DEBOUNCE_DURATION;
 		try {
 			return observable(query(ref(this.db, this.collectionPath), ...queryConstraints)).pipe(
 				switchMap((snapshot) => {
@@ -319,7 +320,7 @@ export abstract class FrostDelegate<T extends ModelTypes = ModelTypes> {
 			? options?.listenToNestedChanges
 			: false;
 		// console.log({listenToNestedChanges})
-		let debounceDuration = options?.debounceDuration ?? 500;
+		let debounceDuration = options?.debounceDuration ?? DEFAULT_DEBOUNCE_DURATION;
 		try {
 			let snapshotsSubjectsMap: Record<string, BehaviorSubject<any>> = {};
 
@@ -332,7 +333,6 @@ export abstract class FrostDelegate<T extends ModelTypes = ModelTypes> {
 			// let outputSubject: Subject<FetchReturnType<T,I>[]>= new Subject()
 
 			observable(query(ref(this.db, this.collectionPath), ...queryConstraints))
-				.pipe(debounceTime(debounceDuration))
 				.subscribe((snapshot) => {
 					if (snapshot.exists()) {
 						const snapshots = snapshot.val();
@@ -437,7 +437,7 @@ export abstract class FrostDelegate<T extends ModelTypes = ModelTypes> {
 				}),
 				switchMap((_observablesMap) => {
 					if (_observablesMap && Object.keys(_observablesMap).length) {
-						return combineLatest(_observablesMap);
+						return combineLatest(_observablesMap).pipe(debounceTime(debounceDuration));
 					}
 					return of({});
 				})
